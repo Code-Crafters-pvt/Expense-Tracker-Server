@@ -122,14 +122,6 @@ const startServer = async () => {
       console.log('🔗 Local URL: http://localhost:' + PORT);
       console.log('🌐 Network URL: http://' + networkAddress + ':' + PORT);
       console.log('💚 Health check: http://localhost:' + PORT + '/health');
-      console.log(
-        '📋 API Base URL: http://' + networkAddress + ':' + PORT + '/api'
-      );
-      console.log('\n📱 For mobile app, use this URL in your .env:');
-      console.log(
-        'API_BASE_URL=http://' + networkAddress + ':' + PORT + '/api'
-      );
-      console.log('\n' + '='.repeat(50) + '\n');
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
