@@ -24,7 +24,6 @@ import exportRoutes from './routes/export';
 dotenv.config();
 
 const app = express();
-app.set('trust proxy', 1);
 const PORT = process.env['PORT'] || 3000;
 
 // Security middleware
