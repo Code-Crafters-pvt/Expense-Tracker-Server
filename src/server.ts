@@ -19,6 +19,7 @@ import expenseRoutes from './routes/expenses';
 import categoryRoutes from './routes/categories';
 import analyticsRoutes from './routes/analytics';
 import exportRoutes from './routes/export';
+import userRoutes from './routes/users';
 
 // Load environment variables
 dotenv.config();
@@ -84,6 +85,7 @@ app.use('/api/expenses', expenseRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 handler
 app.use(notFound);

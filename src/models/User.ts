@@ -6,9 +6,12 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
+  passwordHistory: string[];
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
+  addPasswordToHistory(): Promise<void>;
+  isPasswordInHistory(password: string): Promise<boolean>;
 }
 
 const userSchema = new Schema<IUser>(
@@ -33,8 +36,13 @@ const userSchema = new Schema<IUser>(
     password: {
       type: String,
       required: [true, 'Password is required'],
-      minlength: [6, 'Password must be at least 6 characters'],
-      select: false, // Don't include password in queries by default
+      minlength: [8, 'Password must be at least 8 characters'],
+      select: false,
+    },
+    passwordHistory: {
+      type: [String],
+      default: [],
+      select: false,
     },
   },
   {
@@ -73,6 +81,23 @@ userSchema.methods.comparePassword = async function (
   candidatePassword: string
 ): Promise<boolean> {
   return bcrypt.compare(candidatePassword, this.password);
+};
+
+// Add current password to history (before changing to new password)
+userSchema.methods.addPasswordToHistory = async function (): Promise<void> {
+  // Keep only last 3 passwords in history
+  this.passwordHistory = [this.password, ...this.passwordHistory].slice(0, 3);
+};
+
+// Check if password was used recently
+userSchema.methods.isPasswordInHistory = async function (
+  password: string
+): Promise<boolean> {
+  for (const oldPassword of this.passwordHistory) {
+    const isMatch = await bcrypt.compare(password, oldPassword);
+    if (isMatch) return true;
+  }
+  return false;
 };
 
 // Create indexes
