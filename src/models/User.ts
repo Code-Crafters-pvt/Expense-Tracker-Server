@@ -85,6 +85,12 @@ userSchema.methods.comparePassword = async function (
 
 // Add current password to history (before changing to new password)
 userSchema.methods.addPasswordToHistory = async function (): Promise<void> {
+  // Defensive check: ensure password field is loaded
+  if (!this.password) {
+    throw new Error(
+      'Cannot add to password history: password field not loaded. Use .select("+password") when querying user.'
+    );
+  }
   // Keep only last 3 passwords in history
   this.passwordHistory = [this.password, ...this.passwordHistory].slice(0, 3);
 };

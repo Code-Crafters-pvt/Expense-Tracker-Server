@@ -36,8 +36,14 @@ const validateRegistration = [
     .normalizeEmail()
     .withMessage('Please enter a valid email'),
   body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters'),
+    .custom((value) => {
+      // Use passwordValidator for all checks
+      const validation = validatePasswordComplexity(value);
+      if (!validation.isValid) {
+        throw new Error(validation.errors.join('. '));
+      }
+      return true;
+    }),
 ];
 
 const validateLogin = [
@@ -51,24 +57,24 @@ const validateLogin = [
 // Register user
 router.post('/register', validateRegistration, async (req, res) => {
   try {
-    // Check for validation errors
+    const { name, email, password } = req.body;
+
+    // Check if user already exists FIRST (before expensive validation)
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'User with this email already exists',
+      });
+    }
+
+    // Then check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
         error: 'Validation failed',
         details: errors.array(),
-      });
-    }
-
-    const { name, email, password } = req.body;
-
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'User with this email already exists',
       });
     }
 
@@ -101,8 +107,28 @@ router.post('/register', validateRegistration, async (req, res) => {
         accessToken,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Registration error:', error);
+    
+    // Handle Mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map((err: any) => err.message);
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors,
+      });
+    }
+    
+    // Handle duplicate key error (email already exists)
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        error: 'User with this email already exists',
+      });
+    }
+    
+    // Other server errors
     res.status(500).json({
       success: false,
       error: 'Server error during registration',
@@ -516,8 +542,8 @@ router.post(
         });
       }
 
-      // Find user
-      const user = await User.findById(resetToken.userId).select('+password');
+      // Find user with password and password history
+      const user = await User.findById(resetToken.userId).select('+password +passwordHistory');
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -525,7 +551,19 @@ router.post(
         });
       }
 
-      // Update password
+      // Check if new password is in history (prevent reuse of last 3 passwords)
+      const isInHistory = await user.isPasswordInHistory(newPassword);
+      if (isInHistory) {
+        return res.status(400).json({
+          success: false,
+          error: 'You cannot reuse any of your last 3 passwords. Please choose a different password.',
+        });
+      }
+
+      // Add current password to history before updating
+      await user.addPasswordToHistory();
+
+      // Update password (will be hashed by pre-save hook)
       user.password = newPassword;
       await user.save();
 

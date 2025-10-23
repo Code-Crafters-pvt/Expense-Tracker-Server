@@ -1,6 +1,8 @@
 import rateLimit from 'express-rate-limit';
 
-// Rate limiter for password reset requests (5 per hour per IP)
+// Rate limiter for password reset requests (5 per hour per email)
+// NOTE: Requires express.json() middleware to be applied globally BEFORE routes
+// to ensure req.body.email is available when this rate limiter runs
 export const passwordResetLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5, // 5 requests per hour

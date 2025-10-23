@@ -37,8 +37,8 @@ const resetTokenSchema = new Schema<IResetToken>(
   }
 );
 
-// Auto-delete expired tokens after 24 hours
-resetTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 86400 });
+// Auto-delete expired tokens immediately when expiresAt is reached
+resetTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export const ResetToken = mongoose.model<IResetToken>(
   'ResetToken',
