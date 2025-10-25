@@ -8,6 +8,12 @@ import { OAuth2Client } from 'google-auth-library';
 import { setRefreshCookie, clearRefreshCookie } from '../utils/cookies';
 import { verifyRefreshToken } from '../utils/jwt';
 import authConfig from '../config/authConfig';
+import crypto from 'crypto';
+import { ResetToken } from '../models/ResetToken';
+import { sendPasswordResetEmail } from '../services/emailService';
+import { passwordResetLimiter, loginLimiter } from '../middleware/rateLimiter';
+import { validatePasswordComplexity } from '../utils/passwordValidator';
+
 
 const { refreshCookieName } = authConfig;
 
@@ -30,8 +36,14 @@ const validateRegistration = [
     .normalizeEmail()
     .withMessage('Please enter a valid email'),
   body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters'),
+    .custom((value) => {
+      // Use passwordValidator for all checks
+      const validation = validatePasswordComplexity(value);
+      if (!validation.isValid) {
+        throw new Error(validation.errors.join('. '));
+      }
+      return true;
+    }),
 ];
 
 const validateLogin = [
@@ -45,24 +57,24 @@ const validateLogin = [
 // Register user
 router.post('/register', validateRegistration, async (req, res) => {
   try {
-    // Check for validation errors
+    const { name, email, password } = req.body;
+
+    // Check if user already exists FIRST (before expensive validation)
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'User with this email already exists',
+      });
+    }
+
+    // Then check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
         error: 'Validation failed',
         details: errors.array(),
-      });
-    }
-
-    const { name, email, password } = req.body;
-
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'User with this email already exists',
       });
     }
 
@@ -95,8 +107,28 @@ router.post('/register', validateRegistration, async (req, res) => {
         accessToken,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Registration error:', error);
+    
+    // Handle Mongoose validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map((err: any) => err.message);
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors,
+      });
+    }
+    
+    // Handle duplicate key error (email already exists)
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        error: 'User with this email already exists',
+      });
+    }
+    
+    // Other server errors
     res.status(500).json({
       success: false,
       error: 'Server error during registration',
@@ -105,7 +137,7 @@ router.post('/register', validateRegistration, async (req, res) => {
 });
 
 // Login user
-router.post('/login', validateLogin, async (req, res) => {
+router.post('/login',loginLimiter, validateLogin, async (req, res) => {
   try {
     // Check for validation errors
     const errors = validationResult(req);
@@ -380,5 +412,183 @@ router.post('/oauth', async (req, res) => {
     });
   }
 });
+
+// Forgot password - Request reset token
+router.post(
+  '/forgot-password',
+  passwordResetLimiter,
+  [
+    body('email')
+      .isEmail()
+      .normalizeEmail()
+      .withMessage('Please enter a valid email'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array(),
+        });
+      }
+
+      const { email } = req.body;
+
+      // Find user by email
+      const user = await User.findOne({ email });
+
+      // Always return success (security: don't reveal if email exists)
+      if (!user) {
+        return res.json({
+          success: true,
+          message: 'If that email exists, a reset link has been sent',
+        });
+      }
+
+      // Invalidate any existing reset tokens for this user
+      await ResetToken.updateMany(
+        { userId: user._id, used: false },
+        { used: true }
+      );
+
+      // Generate reset token (cryptographically secure)
+      const resetToken = crypto.randomBytes(32).toString('hex');
+
+      // Hash token before storing (security best practice)
+      const hashedToken = crypto
+        .createHash('sha256')
+        .update(resetToken)
+        .digest('hex');
+
+      // Create reset token record (expires in 1 hour)
+      await ResetToken.create({
+        userId: user._id,
+        token: hashedToken,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+        used: false,
+      });
+
+      // Send reset email
+      try {
+        await sendPasswordResetEmail(user.email, resetToken);
+      } catch (emailError) {
+        console.error('Failed to send reset email:', emailError);
+        // Don't fail the request if email fails
+      }
+
+      res.json({
+        success: true,
+        message: 'If that email exists, a reset link has been sent',
+      });
+    } catch (error) {
+      console.error('Forgot password error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Server error during password reset request',
+      });
+    }
+  }
+);
+
+// Reset password - Use token to set new password
+router.post(
+  '/reset-password',
+  [
+    body('token').notEmpty().withMessage('Reset token is required'),
+    body('newPassword')
+      .isLength({ min: 8, max: 128 })
+      .withMessage('Password must be between 8 and 128 characters'),
+    body('newPassword')
+    .custom((value) => {
+      const validation = validatePasswordComplexity(value);
+      if (!validation.isValid) {
+        throw new Error(validation.errors.join('. '));
+      }
+      return true;
+    }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array(),
+        });
+      }
+
+      const { token, newPassword } = req.body;
+
+      // Hash the provided token to match stored hash
+      const hashedToken = crypto
+        .createHash('sha256')
+        .update(token)
+        .digest('hex');
+
+      // Find valid reset token
+      const resetToken = await ResetToken.findOne({
+        token: hashedToken,
+        used: false,
+        expiresAt: { $gt: new Date() },
+      });
+
+      if (!resetToken) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid or expired reset token',
+        });
+      }
+
+      // Find user with password and password history
+      const user = await User.findById(resetToken.userId).select('+password +passwordHistory');
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found',
+        });
+      }
+
+      // Check if new password is in history (prevent reuse of last 3 passwords)
+      const isInHistory = await user.isPasswordInHistory(newPassword);
+      if (isInHistory) {
+        return res.status(400).json({
+          success: false,
+          error: 'You cannot reuse any of your last 3 passwords. Please choose a different password.',
+        });
+      }
+
+      // Add current password to history before updating
+      await user.addPasswordToHistory();
+
+      // Update password (will be hashed by pre-save hook)
+      user.password = newPassword;
+      await user.save();
+
+      // Mark token as used
+      resetToken.used = true;
+      await resetToken.save();
+
+      // Invalidate all other reset tokens for this user
+      await ResetToken.updateMany(
+        { userId: user._id, _id: { $ne: resetToken._id }, used: false },
+        { used: true }
+      );
+
+      res.json({
+        success: true,
+        message: 'Password reset successfully',
+      });
+    } catch (error) {
+      console.error('Reset password error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Server error during password reset',
+      });
+    }
+  }
+);
 
 export default router;
