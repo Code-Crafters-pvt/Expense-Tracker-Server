@@ -85,8 +85,7 @@ router.post(
       const { currentPassword, newPassword } = req.body;
 
       // Get user with password (password is excluded by default)
-      const user = await User.findById(req.user._id)
-      .select('+password +passwordHistory');
+      const user = await User.findById(req.user._id).select('+password');
       
       if (!user) {
         return res.status(404).json({
@@ -113,16 +112,6 @@ router.post(
           error: 'New password must be different from current password',
         });
       }
-
-      const isInHistory = await user.isPasswordInHistory(newPassword);
-      if (isInHistory) {
-        return res.status(400).json({
-          success: false,
-          error: 'You cannot reuse any of your last 3 passwords. Please choose a different password.',
-        });
-      }
-
-      await user.addPasswordToHistory();
 
       // Update password (will be hashed by pre-save hook)
       user.password = newPassword;
