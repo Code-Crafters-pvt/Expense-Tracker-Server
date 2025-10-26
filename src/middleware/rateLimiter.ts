@@ -18,10 +18,10 @@ export const passwordResetLimiter = rateLimit({
   },
 });
 
-// Rate limiter for password change (3 attempts per hour per user)
+// Rate limiter for password change (5 attempts per hour per user)
 export const passwordChangeLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // 3 attempts per hour
+  max: 5, // 5 attempts per hour (increased from 3 for better UX)
   message: {
     success: false,
     error: 'Too many password change attempts. Please try again later.',
@@ -45,4 +45,22 @@ export const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true, // Only count failed attempts
+});
+
+// Short-term rate limiter for failed login attempts (3 per 1 minute)
+// This provides quick cooldown after rapid failed attempts
+export const loginFailureLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 3, // 3 attempts per minute
+  message: {
+    success: false,
+    error: 'Too many failed login attempts. Please wait 1 minute before trying again.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only count failed attempts
+  keyGenerator: (req) => {
+    // Use email + IP combination for better accuracy
+    return `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`;
+  },
 });

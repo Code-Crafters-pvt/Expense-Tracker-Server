@@ -11,7 +11,7 @@ import authConfig from '../config/authConfig';
 import crypto from 'crypto';
 import { ResetToken } from '../models/ResetToken';
 import { sendPasswordResetEmail } from '../services/emailService';
-import { passwordResetLimiter, loginLimiter } from '../middleware/rateLimiter';
+import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
 
 
@@ -137,7 +137,7 @@ router.post('/register', validateRegistration, async (req, res) => {
 });
 
 // Login user
-router.post('/login',loginLimiter, validateLogin, async (req, res) => {
+router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (req, res) => {
   try {
     // Check for validation errors
     const errors = validationResult(req);
@@ -499,15 +499,14 @@ router.post(
     body('token').notEmpty().withMessage('Reset token is required'),
     body('newPassword')
       .isLength({ min: 8, max: 128 })
-      .withMessage('Password must be between 8 and 128 characters'),
-    body('newPassword')
-    .custom((value) => {
-      const validation = validatePasswordComplexity(value);
-      if (!validation.isValid) {
-        throw new Error(validation.errors.join('. '));
-      }
-      return true;
-    }),
+      .withMessage('Password must be between 8 and 128 characters')
+      .custom((value) => {
+        const validation = validatePasswordComplexity(value);
+        if (!validation.isValid) {
+          throw new Error(validation.errors.join('. '));
+        }
+        return true;
+      }),
   ],
   async (req, res) => {
     try {
@@ -542,26 +541,14 @@ router.post(
         });
       }
 
-      // Find user with password and password history
-      const user = await User.findById(resetToken.userId).select('+password +passwordHistory');
+      // Find user with password
+      const user = await User.findById(resetToken.userId).select('+password');
       if (!user) {
         return res.status(404).json({
           success: false,
           error: 'User not found',
         });
       }
-
-      // Check if new password is in history (prevent reuse of last 3 passwords)
-      const isInHistory = await user.isPasswordInHistory(newPassword);
-      if (isInHistory) {
-        return res.status(400).json({
-          success: false,
-          error: 'You cannot reuse any of your last 3 passwords. Please choose a different password.',
-        });
-      }
-
-      // Add current password to history before updating
-      await user.addPasswordToHistory();
 
       // Update password (will be hashed by pre-save hook)
       user.password = newPassword;

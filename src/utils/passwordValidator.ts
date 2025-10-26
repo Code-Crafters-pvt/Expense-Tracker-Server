@@ -18,27 +18,7 @@ export interface PasswordValidationResult {
       errors.push('Password must not exceed 128 characters');
     }
   
-    // At least one uppercase letter
-    if (!/[A-Z]/.test(password)) {
-      errors.push('Password must contain at least one uppercase letter');
-    }
-  
-    // At least one lowercase letter
-    if (!/[a-z]/.test(password)) {
-      errors.push('Password must contain at least one lowercase letter');
-    }
-  
-    // At least one number
-    if (!/[0-9]/.test(password)) {
-      errors.push('Password must contain at least one number');
-    }
-  
-    // At least one special character
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
-      errors.push('Password must contain at least one special character (!@#$%^&* etc.)');
-    }
-  
-    // Check for common weak passwords
+    // Check for extremely common weak passwords only
     const commonPasswords = [
       'password', 'password123', '12345678', 'qwerty123',
       'abc123456', 'password1', '123456789', 'qwerty12345'

@@ -6,12 +6,9 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
-  passwordHistory: string[];
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
-  addPasswordToHistory(): Promise<void>;
-  isPasswordInHistory(password: string): Promise<boolean>;
 }
 
 const userSchema = new Schema<IUser>(
@@ -37,11 +34,6 @@ const userSchema = new Schema<IUser>(
       type: String,
       required: [true, 'Password is required'],
       minlength: [8, 'Password must be at least 8 characters'],
-      select: false,
-    },
-    passwordHistory: {
-      type: [String],
-      default: [],
       select: false,
     },
   },
@@ -81,29 +73,6 @@ userSchema.methods.comparePassword = async function (
   candidatePassword: string
 ): Promise<boolean> {
   return bcrypt.compare(candidatePassword, this.password);
-};
-
-// Add current password to history (before changing to new password)
-userSchema.methods.addPasswordToHistory = async function (): Promise<void> {
-  // Defensive check: ensure password field is loaded
-  if (!this.password) {
-    throw new Error(
-      'Cannot add to password history: password field not loaded. Use .select("+password") when querying user.'
-    );
-  }
-  // Keep only last 3 passwords in history
-  this.passwordHistory = [this.password, ...this.passwordHistory].slice(0, 3);
-};
-
-// Check if password was used recently
-userSchema.methods.isPasswordInHistory = async function (
-  password: string
-): Promise<boolean> {
-  for (const oldPassword of this.passwordHistory) {
-    const isMatch = await bcrypt.compare(password, oldPassword);
-    if (isMatch) return true;
-  }
-  return false;
 };
 
 // Create indexes
