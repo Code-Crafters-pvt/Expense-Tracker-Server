@@ -499,15 +499,14 @@ router.post(
     body('token').notEmpty().withMessage('Reset token is required'),
     body('newPassword')
       .isLength({ min: 8, max: 128 })
-      .withMessage('Password must be between 8 and 128 characters'),
-    body('newPassword')
-    .custom((value) => {
-      const validation = validatePasswordComplexity(value);
-      if (!validation.isValid) {
-        throw new Error(validation.errors.join('. '));
-      }
-      return true;
-    }),
+      .withMessage('Password must be between 8 and 128 characters')
+      .custom((value) => {
+        const validation = validatePasswordComplexity(value);
+        if (!validation.isValid) {
+          throw new Error(validation.errors.join('. '));
+        }
+        return true;
+      }),
   ],
   async (req, res) => {
     try {
