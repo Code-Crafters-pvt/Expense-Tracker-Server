@@ -25,7 +25,6 @@ const resetTokenSchema = new Schema<IResetToken>(
     expiresAt: {
       type: Date,
       required: true,
-      index: true,
     },
     used: {
       type: Boolean,

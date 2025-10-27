@@ -190,7 +190,7 @@ export const authenticateHybrid = async (
 
       const user = await User.findById(decoded.userId).select('-password');
       if (user && user.isActive && 
-          (decoded.tokenVersion === undefined || decoded.tokenVersion === user.tokenVersion)) {
+          (decoded.tokenVersion !== undefined && decoded.tokenVersion === user.tokenVersion)) {
         console.log('✅ Online user authenticated:', { userId: user._id, email: user.email });
         req.user = user;
         return next();

@@ -30,7 +30,7 @@ router.get('/profile', authenticateHybrid, async (req: AuthRequest, res) => {
           firstName: user.firstName,
           lastName: user.lastName,
           name: user.name,
-          email: user.email!,
+          email: user.email ?? null,
           isOfflineUser: user.isOfflineUser,
           syncStatus: user.syncStatus,
           role: user.role,
@@ -102,7 +102,7 @@ router.put('/profile', authenticateHybrid, validateUpdateProfile, async (req: Au
           firstName: user.firstName,
           lastName: user.lastName,
           name: user.name,
-          email: user.email!,
+          email: user.email ?? null,
           isOfflineUser: user.isOfflineUser,
           syncStatus: user.syncStatus,
           role: user.role,
@@ -147,45 +147,6 @@ const validateChangePassword = [
     }),
 ];
 
-// GET /api/users/profile - Get user profile
-router.get('/profile', async (req: AuthRequest, res) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: 'User not authenticated',
-      });
-    }
-    
-    const user = await User.findById(req.user._id).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found',
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email!,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('Get profile error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error while fetching profile',
-    });
-  }
-});
 
 // POST /api/users/change-password - Change user password
 router.post(
@@ -345,7 +306,7 @@ router.put(
           user: {
             id: user._id,
             name: user.name,
-            email: user.email!,
+            email: user.email ?? null,
             createdAt: user.createdAt,
             updatedAt: user.updatedAt,
           },

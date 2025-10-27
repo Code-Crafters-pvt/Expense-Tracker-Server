@@ -146,15 +146,14 @@ userSchema.methods.comparePassword = async function (
   candidatePassword: string
 ): Promise<boolean> {
   if (!this.password) {
-    return false; // No password set (offline user)
+    // For offline users without password, perform a dummy bcrypt comparison
+    // to prevent timing attacks that could reveal password existence
+    const dummyHash = '$2a$10$dummy.hash.to.prevent.timing.attacks';
+    await bcrypt.compare(candidatePassword, dummyHash);
+    return false;
   }
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Create indexes
-userSchema.index({ email: 1 });
-userSchema.index({ offlineId: 1 });
-userSchema.index({ isOfflineUser: 1 });
-userSchema.index({ syncStatus: 1 });
 
 export const User = mongoose.model<IUser>('User', userSchema);

@@ -14,10 +14,17 @@ import { RefreshToken } from '../models/RefreshToken';
 import { sendPasswordResetEmail } from '../services/emailService';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
+import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/requestHelpers';
 import { v4 as uuidv4 } from 'uuid';
 
 
 const { refreshCookieName, refreshTokenTtl } = authConfig;
+
+// Time conversion constants
+const MS_PER_SECOND = 1000;
+const MS_PER_MINUTE = 60 * MS_PER_SECOND;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
+const MS_PER_DAY = 24 * MS_PER_HOUR;
 
 // Helper to calculate token expiration date
 const getTokenExpirationDate = (ttl: string): Date => {
@@ -27,11 +34,11 @@ const getTokenExpirationDate = (ttl: string): Date => {
   
   let milliseconds = 0;
   switch (unit) {
-    case 's': milliseconds = value * 1000; break;
-    case 'm': milliseconds = value * 60 * 1000; break;
-    case 'h': milliseconds = value * 60 * 60 * 1000; break;
-    case 'd': milliseconds = value * 24 * 60 * 60 * 1000; break;
-    default: milliseconds = value * 60 * 60 * 1000; // default to hours
+    case 's': milliseconds = value * MS_PER_SECOND; break;
+    case 'm': milliseconds = value * MS_PER_MINUTE; break;
+    case 'h': milliseconds = value * MS_PER_HOUR; break;
+    case 'd': milliseconds = value * MS_PER_DAY; break;
+    default: milliseconds = value * MS_PER_HOUR; // default to hours
   }
   
   return new Date(now + milliseconds);
@@ -238,8 +245,8 @@ router.post('/sync-offline-user', validateSyncOfflineUser, async (req, res) => {
     });
 
     // Store refresh token in database
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.ip || req.socket.remoteAddress;
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
     
     await RefreshToken.createRefreshToken(
       offlineUser._id,
@@ -322,9 +329,7 @@ router.post('/register', validateRegistration, async (req, res) => {
     }
 
     // Parse name into firstName and lastName
-    const nameParts = name.trim().split(' ');
-    const firstName = nameParts[0] || '';
-    const lastName = nameParts.slice(1).join(' ') || '';
+    const { firstName, lastName } = parseFullName(name);
 
     // Create new user
     const user = new User({
@@ -353,8 +358,8 @@ router.post('/register', validateRegistration, async (req, res) => {
     });
 
     // Store refresh token in database
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.ip || req.socket.remoteAddress;
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
     
     await RefreshToken.createRefreshToken(
       user._id,
@@ -462,8 +467,8 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
     });
 
     // Store refresh token in database
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.ip || req.socket.remoteAddress;
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
     
     await RefreshToken.createRefreshToken(
       user._id,
@@ -571,8 +576,8 @@ router.post('/refresh', async (req, res) => {
     });
 
     // Store new refresh token in database
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.ip || req.socket.remoteAddress;
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
     
     await RefreshToken.createRefreshToken(
       user._id,
@@ -765,9 +770,7 @@ router.post('/oauth', async (req, res) => {
 
     if (!user) {
       // Parse name into firstName and lastName
-      const nameParts = userData.name.trim().split(' ');
-      const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || '';
+      const { firstName, lastName } = parseFullName(userData.name);
 
       user = new User({
         firstName,
@@ -807,8 +810,8 @@ router.post('/oauth', async (req, res) => {
     });
 
     // Store refresh token in database
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.ip || req.socket.remoteAddress;
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
     
     await RefreshToken.createRefreshToken(
       user._id,
