@@ -108,7 +108,14 @@ router.get(
               : undefined,
       };
 
-      const result = await expenseService.getExpenses(req.user._id, filters, {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: 'User not authenticated',
+        });
+      }
+
+      const result = await expenseService.getExpenses(req.user._id.toString(), filters, {
         page,
         limit,
       });
@@ -130,8 +137,15 @@ router.get(
 // Get expense by ID
 router.get('/:id', async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     const expense = await expenseService.getExpense(
-      req.user._id,
+      req.user._id.toString(),
       req.params.id
     );
 
@@ -151,6 +165,13 @@ router.get('/:id', async (req: AuthRequest, res) => {
 // Create new expense
 router.post('/', validateExpense, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -171,7 +192,7 @@ router.post('/', validateExpense, async (req: AuthRequest, res) => {
       recurringEndDate,
     } = req.body;
 
-    const expense = await expenseService.createExpense(req.user._id, {
+    const expense = await expenseService.createExpense(req.user._id.toString(), {
       amount: parseFloat(amount),
       description,
       category,
@@ -200,6 +221,13 @@ router.post('/', validateExpense, async (req: AuthRequest, res) => {
 // Update expense
 router.put('/:id', validateExpense, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -221,7 +249,7 @@ router.put('/:id', validateExpense, async (req: AuthRequest, res) => {
     } = req.body;
 
     const expense = await expenseService.updateExpense(
-      req.user._id,
+      req.user._id.toString(),
       req.params.id,
       {
         amount: parseFloat(amount),
@@ -253,9 +281,16 @@ router.put('/:id', validateExpense, async (req: AuthRequest, res) => {
 // Delete expense
 router.delete('/:id', async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     const deleteAllInstances = req.query.deleteAllInstances === 'true';
     await expenseService.deleteExpense(
-      req.user._id,
+      req.user._id.toString(),
       req.params.id,
       deleteAllInstances
     );

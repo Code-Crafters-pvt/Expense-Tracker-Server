@@ -12,6 +12,7 @@ const {
 export interface TokenPayload {
   userId: string;
   email: string;
+  tokenVersion?: number; // Optional for backward compatibility
 }
 
 export const generateAccessToken = (payload: TokenPayload): string => {

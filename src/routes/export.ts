@@ -31,6 +31,13 @@ router.get(
   ],
   async (req: AuthRequest, res) => {
     try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: 'User not authenticated',
+        });
+      }
+
       // Check for validation errors
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -54,7 +61,7 @@ router.get(
       };
 
       const { data, filename } = await exportService.exportExpenses(
-        req.user._id,
+        req.user._id.toString(),
         options
       );
 
