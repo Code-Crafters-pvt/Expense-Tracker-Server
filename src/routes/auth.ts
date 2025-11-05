@@ -7,8 +7,8 @@ import axios from 'axios';
 import { OAuth2Client } from 'google-auth-library';
 import { setRefreshCookie, clearRefreshCookie } from '../utils/cookies';
 import { verifyRefreshToken } from '../utils/jwt';
+import { isTokenVersionValid } from '../utils/authChecks';
 import authConfig from '../config/authConfig';
-import crypto from 'crypto';
 import { ResetToken } from '../models/ResetToken';
 import { RefreshToken } from '../models/RefreshToken';
 import { sendPasswordResetEmail } from '../services/emailService';
@@ -16,6 +16,7 @@ import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../midd
 import { validatePasswordComplexity } from '../utils/passwordValidator';
 import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/requestHelpers';
 import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto';
 
 
 const { refreshCookieName, refreshTokenTtl } = authConfig;
@@ -111,7 +112,7 @@ const validateSyncOfflineUser = [
 ];
 
 // Create offline user
-router.post('/create-offline-user', validateOfflineUser, async (req, res) => {
+router.post('/create-offline-user', loginLimiter, validateOfflineUser, async (req, res) => {
   try {
     // Check for validation errors
     const errors = validationResult(req);
@@ -127,13 +128,14 @@ router.post('/create-offline-user', validateOfflineUser, async (req, res) => {
 
     // Generate unique offline ID
     const offlineId = `offline_${uuidv4()}`;
+    const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
 
     // Create offline user
     const user = new User({
       firstName,
       lastName,
       isOfflineUser: true,
-      offlineId,
+      offlineId: offlineIdHash,
       syncStatus: 'offline',
       role: 'user',
       isActive: true,
@@ -180,7 +182,7 @@ router.post('/create-offline-user', validateOfflineUser, async (req, res) => {
 });
 
 // Sync offline user to online user
-router.post('/sync-offline-user', validateSyncOfflineUser, async (req, res) => {
+router.post('/sync-offline-user', loginLimiter, validateSyncOfflineUser, async (req, res) => {
   try {
     // Check for validation errors
     const errors = validationResult(req);
@@ -193,10 +195,11 @@ router.post('/sync-offline-user', validateSyncOfflineUser, async (req, res) => {
     }
 
     const { offlineId, email, password } = req.body;
+    const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
 
     // Find offline user
     const offlineUser = await User.findOne({ 
-      offlineId,
+      offlineId: offlineIdHash,
       isOfflineUser: true,
       syncStatus: 'offline'
     });
@@ -550,8 +553,8 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Check token version
-    if (payload.tokenVersion !== undefined && payload.tokenVersion !== user.tokenVersion) {
+    // Check token version (required and must match)
+    if (!isTokenVersionValid(payload, user)) {
       // Token version mismatch - invalidate this token
       await RefreshToken.findByIdAndUpdate(storedToken._id, { isRevoked: true });
       return res.status(401).json({

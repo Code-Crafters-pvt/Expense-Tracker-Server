@@ -3,6 +3,8 @@ import jwt from 'jsonwebtoken';
 import { User, IUser } from '../models/User';
 import authConfig from '../config/authConfig';
 import { TokenPayload } from '../utils/jwt';
+import { isTokenVersionValid } from '../utils/authChecks';
+import * as crypto from 'crypto';
 
 const { jwtSecret } = authConfig;
 
@@ -66,8 +68,8 @@ export const authenticate = async (
       return;
     }
 
-    // Check token version (for logout-everywhere functionality)
-    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
+    // Check token version (required and must match)
+    if (!isTokenVersionValid(decoded, user)) {
       console.log('❌ Token version mismatch');
       res.status(401).json({
         success: false,
@@ -120,7 +122,6 @@ export const authenticateOffline = async (
       url: req.url,
       method: req.method,
       hasOfflineId: !!offlineId,
-      offlineId: offlineId ? `${offlineId.substring(0, 20)}...` : 'null',
     });
 
     if (!offlineId) {
@@ -132,9 +133,10 @@ export const authenticateOffline = async (
       return;
     }
 
-    // Find offline user
+    // Find offline user (compare using hashed offlineId)
+    const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
     const offlineUser = await User.findOne({ 
-      offlineId,
+      offlineId: offlineIdHash,
       isOfflineUser: true,
       isActive: true
     });
@@ -150,7 +152,6 @@ export const authenticateOffline = async (
 
     console.log('✅ Offline user authenticated:', {
       userId: offlineUser._id,
-      offlineId: offlineUser.offlineId,
       firstName: offlineUser.firstName,
       lastName: offlineUser.lastName,
     });
@@ -189,8 +190,7 @@ export const authenticateHybrid = async (
       const decoded = jwt.verify(token, jwtSecret) as TokenPayload;
 
       const user = await User.findById(decoded.userId).select('-password');
-      if (user && user.isActive && 
-          (decoded.tokenVersion !== undefined && decoded.tokenVersion === user.tokenVersion)) {
+      if (user && user.isActive && isTokenVersionValid(decoded, user)) {
         console.log('✅ Online user authenticated:', { userId: user._id, email: user.email });
         req.user = user;
         return next();
@@ -199,8 +199,9 @@ export const authenticateHybrid = async (
 
     // Try offline authentication
     if (offlineId) {
+      const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
       const offlineUser = await User.findOne({ 
-        offlineId,
+        offlineId: offlineIdHash,
         isOfflineUser: true,
         isActive: true
       });

@@ -1,4 +1,5 @@
 import { Expense, IExpense } from '../models/Expense';
+import mongoose from 'mongoose';
 import { recurringExpenseService } from './recurringExpenseService';
 import { startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
 
@@ -171,7 +172,7 @@ class ExpenseService {
       const result = await Expense.aggregate([
         {
           $match: {
-            userId,
+            userId: new mongoose.Types.ObjectId(userId),
             date: { $gte: start, $lte: end },
           },
         },
@@ -192,7 +193,7 @@ class ExpenseService {
 
   async getCategoryTotals(userId: string, startDate?: Date, endDate?: Date) {
     try {
-      const match: any = { userId };
+      const match: any = { userId: new mongoose.Types.ObjectId(userId) };
       if (startDate || endDate) {
         match.date = {};
         if (startDate) match.date.$gte = startDate;

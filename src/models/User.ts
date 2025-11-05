@@ -148,7 +148,7 @@ userSchema.methods.comparePassword = async function (
   if (!this.password) {
     // For offline users without password, perform a dummy bcrypt comparison
     // to prevent timing attacks that could reveal password existence
-    const dummyHash = '$2a$10$dummy.hash.to.prevent.timing.attacks';
+    const dummyHash = bcrypt.hashSync('invalid_password', 10);
     await bcrypt.compare(candidatePassword, dummyHash);
     return false;
   }
