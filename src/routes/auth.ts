@@ -15,7 +15,6 @@ import { sendPasswordResetEmail } from '../services/emailService';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
 import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/requestHelpers';
-import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
 
 
@@ -29,19 +28,27 @@ const MS_PER_DAY = 24 * MS_PER_HOUR;
 
 // Helper to calculate token expiration date
 const getTokenExpirationDate = (ttl: string): Date => {
-  const value = parseInt(ttl);
-  const unit = ttl.slice(-1);
+  // Validate TTL format: positive integer followed by unit (s, m, h, d)
+  const ttlPattern = /^(\d+)([smhd])$/;
+  const match = ttl?.match(ttlPattern);
   const now = Date.now();
-  
+
+  if (!match) {
+    // Fallback to 1 hour if TTL is invalid or missing
+    return new Date(now + MS_PER_HOUR);
+  }
+
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+
   let milliseconds = 0;
   switch (unit) {
     case 's': milliseconds = value * MS_PER_SECOND; break;
     case 'm': milliseconds = value * MS_PER_MINUTE; break;
     case 'h': milliseconds = value * MS_PER_HOUR; break;
     case 'd': milliseconds = value * MS_PER_DAY; break;
-    default: milliseconds = value * MS_PER_HOUR; // default to hours
   }
-  
+
   return new Date(now + milliseconds);
 };
 
@@ -82,237 +89,11 @@ const validateLogin = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
-const validateOfflineUser = [
-  body('firstName')
-    .trim()
-    .isLength({ min: 1, max: 25 })
-    .withMessage('First name must be between 1 and 25 characters'),
-  body('lastName')
-    .trim()
-    .isLength({ min: 1, max: 25 })
-    .withMessage('Last name must be between 1 and 25 characters'),
-];
-
-const validateSyncOfflineUser = [
-  body('offlineId')
-    .notEmpty()
-    .withMessage('Offline ID is required'),
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please enter a valid email'),
-  body('password')
-    .custom((value) => {
-      const validation = validatePasswordComplexity(value);
-      if (!validation.isValid) {
-        throw new Error(validation.errors.join('. '));
-      }
-      return true;
-    }),
-];
-
-// Create offline user
-router.post('/create-offline-user', loginLimiter, validateOfflineUser, async (req, res) => {
-  try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors.array(),
-      });
-    }
-
-    const { firstName, lastName } = req.body;
-
-    // Generate unique offline ID
-    const offlineId = `offline_${uuidv4()}`;
-    const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
-
-    // Create offline user
-    const user = new User({
-      firstName,
-      lastName,
-      isOfflineUser: true,
-      offlineId: offlineIdHash,
-      syncStatus: 'offline',
-      role: 'user',
-      isActive: true,
-      isEmailVerified: false, // Will be true when they sync
-      tokenVersion: 0,
-    });
-
-    await user.save();
-
-    return res.status(201).json({
-      success: true,
-      message: 'Offline user created successfully',
-      data: {
-        offlineId,
-        user: {
-          id: user._id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          name: user.name,
-          isOfflineUser: user.isOfflineUser,
-          syncStatus: user.syncStatus,
-        },
-      },
-    });
-  } catch (error: any) {
-    console.error('Create offline user error:', error);
-    
-    // Handle Mongoose validation errors
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map((err: any) => err.message);
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors,
-      });
-    }
-    
-    // Other server errors
-    res.status(500).json({
-      success: false,
-      error: 'Server error during offline user creation',
-    });
-  }
-});
-
-// Sync offline user to online user
-router.post('/sync-offline-user', loginLimiter, validateSyncOfflineUser, async (req, res) => {
-  try {
-    // Check for validation errors
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors.array(),
-      });
-    }
-
-    const { offlineId, email, password } = req.body;
-    const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
-
-    // Find offline user
-    const offlineUser = await User.findOne({ 
-      offlineId: offlineIdHash,
-      isOfflineUser: true,
-      syncStatus: 'offline'
-    });
-
-    if (!offlineUser) {
-      return res.status(404).json({
-        success: false,
-        error: 'Offline user not found or already synced',
-      });
-    }
-
-    // Check if email is already taken by another user
-    const existingUser = await User.findOne({ 
-      email,
-      _id: { $ne: offlineUser._id }
-    });
-
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email is already registered',
-      });
-    }
-
-    // Update offline user to online user
-    offlineUser.email = email;
-    offlineUser.password = password;
-    offlineUser.isOfflineUser = false;
-    offlineUser.syncStatus = 'synced';
-    offlineUser.isEmailVerified = true; // Assume verified when they sync
-    offlineUser.lastLoginAt = new Date();
-
-    await offlineUser.save();
-
-    // Generate tokens
-    const accessToken = generateAccessToken({
-      userId: offlineUser._id.toString(),
-      email: offlineUser.email!,
-      tokenVersion: offlineUser.tokenVersion,
-    });
-
-    const refreshToken = generateRefreshToken({
-      userId: offlineUser._id.toString(),
-      email: offlineUser.email!,
-      tokenVersion: offlineUser.tokenVersion,
-    });
-
-    // Store refresh token in database
-    const deviceInfo = getDeviceInfo(req);
-    const ipAddress = getClientIpAddress(req);
-    
-    await RefreshToken.createRefreshToken(
-      offlineUser._id,
-      refreshToken,
-      getTokenExpirationDate(refreshTokenTtl),
-      deviceInfo,
-      ipAddress,
-      req.headers['user-agent']
-    );
-
-    setRefreshCookie(res, refreshToken);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Offline user synced successfully',
-      data: {
-        user: {
-          id: offlineUser._id,
-          firstName: offlineUser.firstName,
-          lastName: offlineUser.lastName,
-          name: offlineUser.name,
-          email: offlineUser.email,
-          isOfflineUser: offlineUser.isOfflineUser,
-          syncStatus: offlineUser.syncStatus,
-        },
-        accessToken,
-      },
-    });
-  } catch (error: any) {
-    console.error('Sync offline user error:', error);
-    
-    // Handle Mongoose validation errors
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map((err: any) => err.message);
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors,
-      });
-    }
-    
-    // Handle duplicate key error (email already exists)
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email is already registered',
-      });
-    }
-    
-    // Other server errors
-    res.status(500).json({
-      success: false,
-      error: 'Server error during sync',
-    });
-  }
-});
-
 // Register user
 router.post('/register', validateRegistration, async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check if user already exists FIRST (before expensive validation)
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -321,7 +102,6 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Then check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -331,23 +111,18 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Parse name into firstName and lastName
     const { firstName, lastName } = parseFullName(name);
 
-    // Create new user
     const user = new User({
       firstName,
       lastName,
-      name, // Keep for backward compatibility
+      name,
       email,
       password,
-      isOfflineUser: false,
-      syncStatus: 'synced',
     });
 
     await user.save();
 
-    // Generate tokens
     const accessToken = generateAccessToken({
       userId: user._id.toString(),
       email: user.email!,
@@ -360,7 +135,6 @@ router.post('/register', validateRegistration, async (req, res) => {
       tokenVersion: user.tokenVersion,
     });
 
-    // Store refresh token in database
     const deviceInfo = getDeviceInfo(req);
     const ipAddress = getClientIpAddress(req);
     
@@ -378,6 +152,7 @@ router.post('/register', validateRegistration, async (req, res) => {
       success: true,
       message: 'User registered successfully',
       data: {
+        serverUserId: user._id.toString(),
         user: { id: user._id, name: user.name, email: user.email },
         accessToken,
       },
@@ -487,6 +262,7 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       success: true,
       message: 'Login successful',
       data: {
+        serverUserId: user._id.toString(),
         user: { id: user._id, name: user.name, email: user.email },
         accessToken,
       },
@@ -778,11 +554,9 @@ router.post('/oauth', async (req, res) => {
       user = new User({
         firstName,
         lastName,
-        name: userData.name, // Keep for backward compatibility
+        name: userData.name,
         email: userData.email,
-        password: Math.random().toString(36).slice(-8), // Generate random password for OAuth users
-        isOfflineUser: false,
-        syncStatus: 'synced',
+        password: Math.random().toString(36).slice(-8),
       });
       await user.save();
     }
@@ -831,6 +605,7 @@ router.post('/oauth', async (req, res) => {
       success: true,
       message: 'OAuth login successful',
       data: {
+        serverUserId: user._id.toString(),
         user: {
           id: user._id,
           name: user.name,

@@ -7,18 +7,13 @@ export interface IUser extends Document {
   firstName: string;
   lastName: string;
   name?: string; // Computed field for backward compatibility
-  email?: string; // Optional for offline users
-  password?: string; // Optional for offline users
+  email: string;
+  password: string;
   role: UserRole;
   isActive: boolean;
   isEmailVerified: boolean;
   tokenVersion: number;
   lastLoginAt?: Date;
-  
-  // Offline user fields
-  isOfflineUser: boolean;
-  offlineId?: string; // Unique identifier for offline users
-  syncStatus: 'offline' | 'pending_sync' | 'synced';
   
   createdAt: Date;
   updatedAt: Date;
@@ -47,9 +42,8 @@ const userSchema = new Schema<IUser>(
     },
     email: {
       type: String,
-      required: false, // Optional for offline users
+      required: [true, 'Email is required'],
       unique: true,
-      sparse: true, // Allow multiple nulls
       lowercase: true,
       trim: true,
       match: [
@@ -59,7 +53,7 @@ const userSchema = new Schema<IUser>(
     },
     password: {
       type: String,
-      required: false, // Optional for offline users
+      required: [true, 'Password is required'],
       minlength: [8, 'Password must be at least 8 characters'],
       select: false,
     },
@@ -83,26 +77,6 @@ const userSchema = new Schema<IUser>(
     },
     lastLoginAt: {
       type: Date,
-    },
-    
-    // Offline user fields
-    isOfflineUser: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
-    offlineId: {
-      type: String,
-      required: false,
-      unique: true,
-      sparse: true, // Allow multiple nulls
-      index: true,
-    },
-    syncStatus: {
-      type: String,
-      enum: ['offline', 'pending_sync', 'synced'],
-      default: 'offline',
-      index: true,
     },
   },
   {
@@ -145,13 +119,6 @@ userSchema.pre('save', async function (next) {
 userSchema.methods.comparePassword = async function (
   candidatePassword: string
 ): Promise<boolean> {
-  if (!this.password) {
-    // For offline users without password, perform a dummy bcrypt comparison
-    // to prevent timing attacks that could reveal password existence
-    const dummyHash = bcrypt.hashSync('invalid_password', 10);
-    await bcrypt.compare(candidatePassword, dummyHash);
-    return false;
-  }
   return bcrypt.compare(candidatePassword, this.password);
 };
 

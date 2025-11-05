@@ -1,7 +1,7 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
 import { User } from '../models/User';
-import { authenticate, AuthRequest, authenticateHybrid } from '../middleware/auth';
+import { authenticate, AuthRequest } from '../middleware/auth';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
 import { passwordChangeLimiter } from '../middleware/rateLimiter';
 import { sendPasswordChangedNotification } from '../services/emailService';
@@ -9,9 +9,7 @@ import { RefreshToken } from '../models/RefreshToken';
 
 const router = express.Router();
 
-// Routes that work for both offline and online users
-// Get user profile (works for both offline and online users)
-router.get('/profile', authenticateHybrid, async (req: AuthRequest, res) => {
+router.get('/profile', authenticate, async (req: AuthRequest, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -30,9 +28,7 @@ router.get('/profile', authenticateHybrid, async (req: AuthRequest, res) => {
           firstName: user.firstName,
           lastName: user.lastName,
           name: user.name,
-          email: user.email ?? null,
-          isOfflineUser: user.isOfflineUser,
-          syncStatus: user.syncStatus,
+          email: user.email,
           role: user.role,
           isActive: user.isActive,
           isEmailVerified: user.isEmailVerified,
@@ -51,7 +47,6 @@ router.get('/profile', authenticateHybrid, async (req: AuthRequest, res) => {
   }
 });
 
-// Update user profile (works for both offline and online users)
 const validateUpdateProfile = [
   body('firstName')
     .optional()
@@ -65,7 +60,7 @@ const validateUpdateProfile = [
     .withMessage('Last name must be between 1 and 25 characters'),
 ];
 
-router.put('/profile', authenticateHybrid, validateUpdateProfile, async (req: AuthRequest, res) => {
+router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequest, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -74,7 +69,6 @@ router.put('/profile', authenticateHybrid, validateUpdateProfile, async (req: Au
       });
     }
 
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -87,7 +81,6 @@ router.put('/profile', authenticateHybrid, validateUpdateProfile, async (req: Au
     const { firstName, lastName } = req.body;
     const user = req.user;
 
-    // Update fields if provided
     if (firstName !== undefined) user.firstName = firstName;
     if (lastName !== undefined) user.lastName = lastName;
 
@@ -102,9 +95,7 @@ router.put('/profile', authenticateHybrid, validateUpdateProfile, async (req: Au
           firstName: user.firstName,
           lastName: user.lastName,
           name: user.name,
-          email: user.email ?? null,
-          isOfflineUser: user.isOfflineUser,
-          syncStatus: user.syncStatus,
+          email: user.email,
           role: user.role,
           isActive: user.isActive,
           isEmailVerified: user.isEmailVerified,
@@ -123,7 +114,6 @@ router.put('/profile', authenticateHybrid, validateUpdateProfile, async (req: Au
   }
 });
 
-// All other routes require online authentication
 router.use(authenticate);
 
 // Validation middleware for change password
@@ -306,7 +296,7 @@ router.put(
           user: {
             id: user._id,
             name: user.name,
-            email: user.email ?? null,
+            email: user.email,
             createdAt: user.createdAt,
             updatedAt: user.updatedAt,
           },

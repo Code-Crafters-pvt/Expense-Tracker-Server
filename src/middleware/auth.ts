@@ -4,16 +4,11 @@ import { User, IUser } from '../models/User';
 import authConfig from '../config/authConfig';
 import { TokenPayload } from '../utils/jwt';
 import { isTokenVersionValid } from '../utils/authChecks';
-import * as crypto from 'crypto';
 
 const { jwtSecret } = authConfig;
 
 export interface AuthRequest extends Request {
   user?: IUser;
-}
-
-export interface OfflineAuthRequest extends Request {
-  offlineUser?: IUser;
 }
 
 // Standard JWT authentication middleware
@@ -106,127 +101,5 @@ export const authenticate = async (
         error: 'Server error during authentication.',
       });
     }
-  }
-};
-
-// Offline user authentication middleware
-export const authenticateOffline = async (
-  req: OfflineAuthRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const offlineId = req.headers['x-offline-id'] as string;
-
-    console.log('🔐 Offline Auth Debug:', {
-      url: req.url,
-      method: req.method,
-      hasOfflineId: !!offlineId,
-    });
-
-    if (!offlineId) {
-      console.log('❌ No offline ID provided');
-      res.status(401).json({
-        success: false,
-        error: 'Access denied. No offline ID provided.',
-      });
-      return;
-    }
-
-    // Find offline user (compare using hashed offlineId)
-    const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
-    const offlineUser = await User.findOne({ 
-      offlineId: offlineIdHash,
-      isOfflineUser: true,
-      isActive: true
-    });
-
-    if (!offlineUser) {
-      console.log('❌ Offline user not found');
-      res.status(401).json({
-        success: false,
-        error: 'Invalid offline ID. User not found.',
-      });
-      return;
-    }
-
-    console.log('✅ Offline user authenticated:', {
-      userId: offlineUser._id,
-      firstName: offlineUser.firstName,
-      lastName: offlineUser.lastName,
-    });
-    
-    req.offlineUser = offlineUser;
-    next();
-  } catch (error) {
-    console.log('❌ Offline auth middleware error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error during offline authentication.',
-    });
-  }
-};
-
-// Hybrid authentication middleware (supports both online and offline)
-export const authenticateHybrid = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const authHeader = req.headers.authorization;
-    const offlineId = req.headers['x-offline-id'] as string;
-
-    console.log('🔐 Hybrid Auth Debug:', {
-      url: req.url,
-      method: req.method,
-      hasAuthHeader: !!authHeader,
-      hasOfflineId: !!offlineId,
-    });
-
-    // Try JWT authentication first
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      const decoded = jwt.verify(token, jwtSecret) as TokenPayload;
-
-      const user = await User.findById(decoded.userId).select('-password');
-      if (user && user.isActive && isTokenVersionValid(decoded, user)) {
-        console.log('✅ Online user authenticated:', { userId: user._id, email: user.email });
-        req.user = user;
-        return next();
-      }
-    }
-
-    // Try offline authentication
-    if (offlineId) {
-      const offlineIdHash = crypto.createHash('sha256').update(offlineId).digest('hex');
-      const offlineUser = await User.findOne({ 
-        offlineId: offlineIdHash,
-        isOfflineUser: true,
-        isActive: true
-      });
-
-      if (offlineUser) {
-        console.log('✅ Offline user authenticated:', { 
-          userId: offlineUser._id, 
-          offlineId: offlineUser.offlineId 
-        });
-        req.user = offlineUser;
-        return next();
-      }
-    }
-
-    // Neither authentication method worked
-    console.log('❌ No valid authentication found');
-    res.status(401).json({
-      success: false,
-      error: 'Access denied. No valid authentication provided.',
-    });
-  } catch (error) {
-    console.log('❌ Hybrid auth middleware error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error during authentication.',
-    });
   }
 };
