@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { query, validationResult } from 'express-validator';
 import { Expense } from '../models/Expense';
 import { authenticate, AuthRequest } from '../middleware/auth';
@@ -23,6 +24,13 @@ const validateDateRange = [
 // Get spending overview
 router.get('/overview', validateDateRange, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -42,7 +50,7 @@ router.get('/overview', validateDateRange, async (req: AuthRequest, res) => {
 
     // Build filter
     const filter = {
-      userId: req.user._id,
+      userId: new mongoose.Types.ObjectId(req.user._id),
       date: {
         $gte: startDate,
         $lte: endDate,
@@ -84,7 +92,7 @@ router.get('/overview', validateDateRange, async (req: AuthRequest, res) => {
     const dailySpending = await Expense.aggregate([
       {
         $match: {
-          userId: req.user._id,
+          userId: new mongoose.Types.ObjectId(req.user._id),
           date: {
             $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
             $lte: new Date(),
@@ -133,6 +141,13 @@ router.get('/overview', validateDateRange, async (req: AuthRequest, res) => {
 // Get spending by category
 router.get('/by-category', validateDateRange, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -153,7 +168,7 @@ router.get('/by-category', validateDateRange, async (req: AuthRequest, res) => {
     const spendingByCategory = await Expense.aggregate([
       {
         $match: {
-          userId: req.user._id,
+          userId: new mongoose.Types.ObjectId(req.user._id),
           date: {
             $gte: startDate,
             $lte: endDate,
@@ -226,6 +241,13 @@ router.get('/by-category', validateDateRange, async (req: AuthRequest, res) => {
 // Get monthly spending trends
 router.get('/monthly-trends', async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     const months = parseInt(req.query.months as string) || 6;
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
@@ -233,7 +255,7 @@ router.get('/monthly-trends', async (req: AuthRequest, res) => {
     const monthlySpending = await Expense.aggregate([
       {
         $match: {
-          userId: req.user._id,
+          userId: new mongoose.Types.ObjectId(req.user._id),
           date: { $gte: startDate },
         },
       },
@@ -285,13 +307,20 @@ router.get('/monthly-trends', async (req: AuthRequest, res) => {
 // Get recent expenses summary
 router.get('/recent-summary', async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     const days = parseInt(req.query.days as string) || 7;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
     // Get recent expenses
     const recentExpenses = await Expense.find({
-      userId: req.user._id,
+      userId: req.user._id.toString(),
       date: { $gte: startDate },
     })
       .sort({ date: -1 })
@@ -301,7 +330,7 @@ router.get('/recent-summary', async (req: AuthRequest, res) => {
     const totalSpending = await Expense.aggregate([
       {
         $match: {
-          userId: req.user._id,
+          userId: new mongoose.Types.ObjectId(req.user._id),
           date: { $gte: startDate },
         },
       },
@@ -317,7 +346,7 @@ router.get('/recent-summary', async (req: AuthRequest, res) => {
     const topCategories = await Expense.aggregate([
       {
         $match: {
-          userId: req.user._id,
+          userId: new mongoose.Types.ObjectId(req.user._id),
           date: { $gte: startDate },
         },
       },

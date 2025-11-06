@@ -7,15 +7,54 @@ import axios from 'axios';
 import { OAuth2Client } from 'google-auth-library';
 import { setRefreshCookie, clearRefreshCookie } from '../utils/cookies';
 import { verifyRefreshToken } from '../utils/jwt';
+import { isTokenVersionValid } from '../utils/authChecks';
 import authConfig from '../config/authConfig';
-import crypto from 'crypto';
 import { ResetToken } from '../models/ResetToken';
+import { RefreshToken } from '../models/RefreshToken';
 import { sendPasswordResetEmail } from '../services/emailService';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
+import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/requestHelpers';
+import crypto from 'crypto';
 
 
-const { refreshCookieName } = authConfig;
+const { refreshCookieName, refreshTokenTtl } = authConfig;
+
+// Time conversion constants
+const MS_PER_SECOND = 1000;
+const MS_PER_MINUTE = 60 * MS_PER_SECOND;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
+const MS_PER_DAY = 24 * MS_PER_HOUR;
+
+// Helper to calculate token expiration date
+const getTokenExpirationDate = (ttl: string): Date => {
+  // Validate TTL format: positive integer followed by unit (s, m, h, d)
+  const ttlPattern = /^(\d+)([smhd])$/;
+  const match = ttl?.match(ttlPattern);
+  const now = Date.now();
+
+  if (!match) {
+    // Fallback to 1 hour if TTL is invalid or missing
+    return new Date(now + MS_PER_HOUR);
+  }
+
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return new Date(now + MS_PER_HOUR);
+  }
+
+  let milliseconds = 0;
+  switch (unit) {
+    case 's': milliseconds = value * MS_PER_SECOND; break;
+    case 'm': milliseconds = value * MS_PER_MINUTE; break;
+    case 'h': milliseconds = value * MS_PER_HOUR; break;
+    case 'd': milliseconds = value * MS_PER_DAY; break;
+  }
+
+  return new Date(now + milliseconds);
+};
 
 const router = express.Router();
 
@@ -57,9 +96,9 @@ const validateLogin = [
 // Register user
 router.post('/register', validateRegistration, async (req, res) => {
   try {
+    // 'name' is accepted for backward compatibility; we derive firstName/lastName as primary fields
     const { name, email, password } = req.body;
 
-    // Check if user already exists FIRST (before expensive validation)
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -68,7 +107,6 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Then check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -78,8 +116,11 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Create new user
+    const { firstName, lastName } = parseFullName(name);
+
     const user = new User({
+      firstName,
+      lastName,
       name,
       email,
       password,
@@ -87,22 +128,36 @@ router.post('/register', validateRegistration, async (req, res) => {
 
     await user.save();
 
-    // Generate tokens
     const accessToken = generateAccessToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
 
     const refreshToken = generateRefreshToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
+
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
+    
+    await RefreshToken.createRefreshToken(
+      user._id,
+      refreshToken,
+      getTokenExpirationDate(refreshTokenTtl),
+      deviceInfo,
+      ipAddress,
+      req.headers['user-agent']
+    );
 
     setRefreshCookie(res, refreshToken);
     return res.status(201).json({
       success: true,
       message: 'User registered successfully',
       data: {
+        serverUserId: user._id.toString(),
         user: { id: user._id, name: user.name, email: user.email },
         accessToken,
       },
@@ -160,6 +215,14 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       });
     }
 
+    // Check if account is active
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        error: 'Account has been deactivated. Please contact support.',
+      });
+    }
+
     // Check password
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
@@ -169,21 +232,42 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       });
     }
 
+    // Update last login timestamp
+    user.lastLoginAt = new Date();
+    await user.save();
+
     // Generate tokens
     const accessToken = generateAccessToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
 
     const refreshToken = generateRefreshToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
+
+    // Store refresh token in database
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
+    
+    await RefreshToken.createRefreshToken(
+      user._id,
+      refreshToken,
+      getTokenExpirationDate(refreshTokenTtl),
+      deviceInfo,
+      ipAddress,
+      req.headers['user-agent']
+    );
+
     setRefreshCookie(res, refreshToken);
     return res.json({
       success: true,
       message: 'Login successful',
       data: {
+        serverUserId: user._id.toString(),
         user: { id: user._id, name: user.name, email: user.email },
         accessToken,
       },
@@ -208,6 +292,7 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
+    // Verify JWT signature first
     let payload;
     try {
       payload = verifyRefreshToken(tokenFromCookie);
@@ -215,6 +300,20 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({
         success: false,
         error: 'Invalid refresh token',
+      });
+    }
+
+    // Hash token and check if it exists in database
+    const hashedToken = RefreshToken.hashToken(tokenFromCookie);
+    const storedToken = await RefreshToken.findOne({
+      token: hashedToken,
+      isRevoked: false,
+    });
+
+    if (!storedToken) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid or revoked refresh token',
       });
     }
 
@@ -227,15 +326,51 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Issue new tokens and rotate refresh cookie
+    // Check if account is active
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        error: 'Account has been deactivated',
+      });
+    }
+
+    // Check token version (required and must match)
+    if (!isTokenVersionValid(payload, user)) {
+      // Token version mismatch - invalidate this token
+      await RefreshToken.findByIdAndUpdate(storedToken._id, { isRevoked: true });
+      return res.status(401).json({
+        success: false,
+        error: 'Token has been invalidated. Please log in again.',
+      });
+    }
+
+    // Revoke old refresh token (token rotation)
+    await RefreshToken.findByIdAndUpdate(storedToken._id, { isRevoked: true });
+
+    // Issue new tokens
     const newAccessToken = generateAccessToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
     const newRefreshToken = generateRefreshToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
+
+    // Store new refresh token in database
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
+    
+    await RefreshToken.createRefreshToken(
+      user._id,
+      newRefreshToken,
+      getTokenExpirationDate(refreshTokenTtl),
+      deviceInfo,
+      ipAddress,
+      req.headers['user-agent']
+    );
 
     setRefreshCookie(res, newRefreshToken);
 
@@ -255,18 +390,86 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
-// Logout - clear refresh cookie
-router.post('/logout', async (_req, res) => {
-  clearRefreshCookie(res);
-  return res.json({
-    success: true,
-    message: 'Logged out',
-  });
+// Logout - invalidate refresh token and clear cookie
+router.post('/logout', async (req, res) => {
+  try {
+    const tokenFromCookie = req.cookies?.[refreshCookieName];
+    
+    if (tokenFromCookie) {
+      // Hash the token to find it in database
+      const hashedToken = RefreshToken.hashToken(tokenFromCookie);
+      
+      // Mark token as revoked (soft delete)
+      await RefreshToken.findOneAndUpdate(
+        { token: hashedToken },
+        { isRevoked: true }
+      );
+    }
+    
+    clearRefreshCookie(res);
+    return res.json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    // Still clear cookie even if DB operation fails
+    clearRefreshCookie(res);
+    return res.json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  }
+});
+
+// Logout from all devices - invalidate all refresh tokens for user
+router.post('/logout-all', authenticate, async (req: AuthRequest, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+    
+    const user = req.user;
+    
+    // Increment token version to invalidate all access tokens
+    user.tokenVersion += 1;
+    await user.save();
+    
+    // Revoke all refresh tokens for this user
+    await RefreshToken.updateMany(
+      { userId: user._id, isRevoked: false },
+      { isRevoked: true }
+    );
+    
+    // Clear current cookie
+    clearRefreshCookie(res);
+    
+    return res.json({
+      success: true,
+      message: 'Logged out from all devices successfully',
+    });
+  } catch (error) {
+    console.error('Logout all error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Server error during logout',
+    });
+  }
 });
 
 // Get current user
 router.get('/me', authenticate, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+    
     res.json({
       success: true,
       data: {
@@ -278,27 +481,6 @@ router.get('/me', authenticate, async (req: AuthRequest, res) => {
     res.status(500).json({
       success: false,
       error: 'Server error',
-    });
-  }
-});
-
-// Logout user
-router.post('/logout', async (req, res) => {
-  try {
-    // Logout should work even without authentication
-    // In a stateless JWT system, logout is typically handled on the client side
-    // by removing the token from storage. However, we can add server-side logic here
-    // if needed (like blacklisting tokens, logging logout events, etc.)
-
-    res.json({
-      success: true,
-      message: 'Logout successful',
-    });
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error during logout',
     });
   }
 });
@@ -371,24 +553,61 @@ router.post('/oauth', async (req, res) => {
     let user = await User.findOne({ email: userData.email });
 
     if (!user) {
+      // Parse name into firstName and lastName
+      const { firstName, lastName } = parseFullName(userData.name);
+
       user = new User({
+        firstName,
+        lastName,
         name: userData.name,
         email: userData.email,
-        password: Math.random().toString(36).slice(-8), // Generate random password for OAuth users
+        // Generate secure random placeholder password for OAuth users
+        password: crypto
+          .randomBytes(6)
+          .toString('base64')
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .slice(0, 8),
       });
       await user.save();
     }
 
+    // Check if account is active
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        error: 'Account has been deactivated. Please contact support.',
+      });
+    }
+
+    // Update last login timestamp
+    user.lastLoginAt = new Date();
+    await user.save();
+
     // Generate tokens
     const accessToken = generateAccessToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
 
     const refreshToken = generateRefreshToken({
       userId: user._id.toString(),
-      email: user.email,
+      email: user.email!,
+      tokenVersion: user.tokenVersion,
     });
+
+    // Store refresh token in database
+    const deviceInfo = getDeviceInfo(req);
+    const ipAddress = getClientIpAddress(req);
+    
+    await RefreshToken.createRefreshToken(
+      user._id,
+      refreshToken,
+      getTokenExpirationDate(refreshTokenTtl),
+      deviceInfo,
+      ipAddress,
+      req.headers['user-agent']
+    );
 
     setRefreshCookie(res, refreshToken);
 
@@ -396,10 +615,11 @@ router.post('/oauth', async (req, res) => {
       success: true,
       message: 'OAuth login successful',
       data: {
+        serverUserId: user._id.toString(),
         user: {
           id: user._id,
           name: user.name,
-          email: user.email,
+          email: user.email!,
         },
         accessToken,
       },
@@ -472,7 +692,7 @@ router.post(
 
       // Send reset email
       try {
-        await sendPasswordResetEmail(user.email, resetToken);
+        await sendPasswordResetEmail(user.email!, resetToken);
       } catch (emailError) {
         console.error('Failed to send reset email:', emailError);
         // Don't fail the request if email fails

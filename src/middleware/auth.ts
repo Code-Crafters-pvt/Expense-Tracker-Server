@@ -1,14 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { User } from '../models/User';
+import { User, IUser } from '../models/User';
 import authConfig from '../config/authConfig';
+import { TokenPayload } from '../utils/jwt';
+import { isTokenVersionValid } from '../utils/authChecks';
 
 const { jwtSecret } = authConfig;
 
 export interface AuthRequest extends Request {
-  user?: any;
+  user?: IUser;
 }
 
+// Standard JWT authentication middleware
 export const authenticate = async (
   req: AuthRequest,
   res: Response,
@@ -36,7 +39,7 @@ export const authenticate = async (
 
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
-    const decoded = jwt.verify(token, jwtSecret) as any;
+    const decoded = jwt.verify(token, jwtSecret) as TokenPayload;
 
     // Get user from database
     const user = await User.findById(decoded.userId).select('-password');
@@ -46,6 +49,26 @@ export const authenticate = async (
       res.status(401).json({
         success: false,
         error: 'Invalid token. User not found.',
+      });
+      return;
+    }
+
+    // Check if account is active
+    if (!user.isActive) {
+      console.log('❌ Account is deactivated');
+      res.status(403).json({
+        success: false,
+        error: 'Account has been deactivated. Please contact support.',
+      });
+      return;
+    }
+
+    // Check token version (required and must match)
+    if (!isTokenVersionValid(decoded, user)) {
+      console.log('❌ Token version mismatch');
+      res.status(401).json({
+        success: false,
+        error: 'Token has been invalidated. Please log in again.',
       });
       return;
     }

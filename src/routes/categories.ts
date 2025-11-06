@@ -28,9 +28,16 @@ const validateCategory = [
 // Get all categories (default + user's custom categories)
 router.get('/', async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     const defaultCategories = await Category.find({ isDefault: true });
     const userCategories = await Category.find({
-      userId: req.user._id,
+      userId: req.user._id.toString(),
       isDefault: false,
     });
 
@@ -52,6 +59,13 @@ router.get('/', async (req: AuthRequest, res) => {
 // Create custom category
 router.post('/', validateCategory, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -67,7 +81,7 @@ router.post('/', validateCategory, async (req: AuthRequest, res) => {
     // Check if category with same name already exists for this user
     const existingCategory = await Category.findOne({
       name: name.toLowerCase(),
-      userId: req.user._id,
+      userId: req.user._id.toString(),
     });
 
     if (existingCategory) {
@@ -104,6 +118,13 @@ router.post('/', validateCategory, async (req: AuthRequest, res) => {
 // Update custom category
 router.put('/:id', validateCategory, async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -119,7 +140,7 @@ router.put('/:id', validateCategory, async (req: AuthRequest, res) => {
     const category = await Category.findOneAndUpdate(
       {
         _id: req.params.id,
-        userId: req.user._id,
+        userId: req.user._id.toString(),
         isDefault: false, // Can't update default categories
       },
       {
@@ -154,9 +175,16 @@ router.put('/:id', validateCategory, async (req: AuthRequest, res) => {
 // Delete custom category
 router.delete('/:id', async (req: AuthRequest, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not authenticated',
+      });
+    }
+
     const category = await Category.findOneAndDelete({
       _id: req.params.id,
-      userId: req.user._id,
+      userId: req.user._id.toString(),
       isDefault: false, // Can't delete default categories
     });
 

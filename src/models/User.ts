@@ -1,11 +1,20 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
+import { UserRole } from '../enums/UserRole';
 
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId;
-  name: string;
+  firstName: string;
+  lastName: string;
+  name?: string; // Computed field for backward compatibility
   email: string;
   password: string;
+  role: UserRole;
+  isActive: boolean;
+  isEmailVerified: boolean;
+  tokenVersion: number;
+  lastLoginAt?: Date;
+  
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -13,9 +22,21 @@ export interface IUser extends Document {
 
 const userSchema = new Schema<IUser>(
   {
+    firstName: {
+      type: String,
+      required: [true, 'First name is required'],
+      trim: true,
+      maxlength: [25, 'First name cannot be more than 25 characters'],
+    },
+    lastName: {
+      type: String,
+      required: [true, 'Last name is required'],
+      trim: true,
+      maxlength: [25, 'Last name cannot be more than 25 characters'],
+    },
     name: {
       type: String,
-      required: [true, 'Name is required'],
+      required: false, // Computed field
       trim: true,
       maxlength: [50, 'Name cannot be more than 50 characters'],
     },
@@ -36,6 +57,27 @@ const userSchema = new Schema<IUser>(
       minlength: [8, 'Password must be at least 8 characters'],
       select: false,
     },
+    role: {
+      type: String,
+      enum: Object.values(UserRole),
+      default: UserRole.USER,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: true, // Defaults to true for existing users, will be false for new registrations with email verification
+    },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+    lastLoginAt: {
+      type: Date,
+    },
   },
   {
     timestamps: true,
@@ -51,21 +93,21 @@ const userSchema = new Schema<IUser>(
   }
 );
 
-// Hash password before saving
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    return next();
+  this.name = [this.firstName, this.lastName].filter(Boolean).join(' ').trim();
+
+  if (this.password && this.isModified('password')) {
+    try {
+      const salt = await bcrypt.genSalt(
+        parseInt(process.env.BCRYPT_ROUNDS || '12')
+      );
+      this.password = await bcrypt.hash(this.password, salt);
+    } catch (error) {
+      return next(error as Error);
+    }
   }
 
-  try {
-    const salt = await bcrypt.genSalt(
-      parseInt(process.env.BCRYPT_ROUNDS || '12')
-    );
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error as Error);
-  }
+  next();
 });
 
 // Compare password method
@@ -75,7 +117,5 @@ userSchema.methods.comparePassword = async function (
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Create indexes
-userSchema.index({ email: 1 });
 
 export const User = mongoose.model<IUser>('User', userSchema);
