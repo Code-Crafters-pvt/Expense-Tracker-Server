@@ -207,7 +207,7 @@ router.post(
       );
 
       try {
-        await sendPasswordChangedNotification(user.email!, user.name!);
+        await sendPasswordChangedNotification(user.email!, user.name ?? "");
       } catch (emailError) {
         console.error('Failed to send password changed notification:', emailError);
       }

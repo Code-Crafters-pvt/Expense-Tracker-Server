@@ -69,7 +69,7 @@ const userSchema = new Schema<IUser>(
     },
     isEmailVerified: {
       type: Boolean,
-      default: true, // Default true for existing users, will be false for new registrations with email verification
+      default: true, // Defaults to true for existing users, will be false for new registrations with email verification
     },
     tokenVersion: {
       type: Number,
@@ -93,14 +93,9 @@ const userSchema = new Schema<IUser>(
   }
 );
 
-// Compute name field and hash password before saving
 userSchema.pre('save', async function (next) {
-  // Compute name from firstName and lastName
-  if (this.firstName && this.lastName) {
-    this.name = `${this.firstName} ${this.lastName}`;
-  }
+  this.name = [this.firstName, this.lastName].filter(Boolean).join(' ').trim();
 
-  // Hash password only if it exists and is modified
   if (this.password && this.isModified('password')) {
     try {
       const salt = await bcrypt.genSalt(

@@ -13,7 +13,6 @@ export interface IRefreshToken extends Document {
   updatedAt: Date;
 }
 
-// Interface for static methods
 export interface IRefreshTokenModel extends Model<IRefreshToken> {
   hashToken(token: string): string;
   createRefreshToken(
@@ -26,7 +25,7 @@ export interface IRefreshTokenModel extends Model<IRefreshToken> {
   ): Promise<IRefreshToken>;
 }
 
-const refreshTokenSchema = new Schema<IRefreshToken>(
+const refreshTokenSchema = new Schema<IRefreshToken, IRefreshTokenModel>(
   {
     userId: {
       type: Schema.Types.ObjectId,
@@ -78,6 +77,7 @@ refreshTokenSchema.statics.hashToken = function (token: string): string {
 
 // Static method to create and store refresh token
 refreshTokenSchema.statics.createRefreshToken = async function (
+  this: IRefreshTokenModel,
   userId: mongoose.Types.ObjectId,
   token: string,
   expiresAt: Date,
@@ -85,7 +85,7 @@ refreshTokenSchema.statics.createRefreshToken = async function (
   ipAddress?: string,
   userAgent?: string
 ): Promise<IRefreshToken> {
-  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+  const hashedToken = this.hashToken(token);
 
   return this.create({
     userId,

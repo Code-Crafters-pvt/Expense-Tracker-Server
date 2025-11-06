@@ -15,7 +15,7 @@ import { sendPasswordResetEmail } from '../services/emailService';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
 import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/requestHelpers';
-import * as crypto from 'crypto';
+import crypto from 'crypto';
 
 
 const { refreshCookieName, refreshTokenTtl } = authConfig;
@@ -40,6 +40,10 @@ const getTokenExpirationDate = (ttl: string): Date => {
 
   const value = parseInt(match[1], 10);
   const unit = match[2];
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return new Date(now + MS_PER_HOUR);
+  }
 
   let milliseconds = 0;
   switch (unit) {
@@ -92,6 +96,7 @@ const validateLogin = [
 // Register user
 router.post('/register', validateRegistration, async (req, res) => {
   try {
+    // 'name' is accepted for backward compatibility; we derive firstName/lastName as primary fields
     const { name, email, password } = req.body;
 
     const existingUser = await User.findOne({ email });
@@ -556,7 +561,12 @@ router.post('/oauth', async (req, res) => {
         lastName,
         name: userData.name,
         email: userData.email,
-        password: Math.random().toString(36).slice(-8),
+        // Generate secure random placeholder password for OAuth users
+        password: crypto
+          .randomBytes(6)
+          .toString('base64')
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .slice(0, 8),
       });
       await user.save();
     }
