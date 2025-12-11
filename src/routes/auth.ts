@@ -5,7 +5,6 @@ import { generateAccessToken, generateRefreshToken } from '../utils/jwt';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import axios from 'axios';
 import { OAuth2Client } from 'google-auth-library';
-import { setRefreshCookie, clearRefreshCookie } from '../utils/cookies';
 import { verifyRefreshToken } from '../utils/jwt';
 import { isTokenVersionValid } from '../utils/authChecks';
 import authConfig from '../config/authConfig';
@@ -18,7 +17,7 @@ import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/reque
 import crypto from 'crypto';
 
 
-const { refreshCookieName, refreshTokenTtl } = authConfig;
+const { refreshTokenTtl } = authConfig;
 
 // Time conversion constants
 const MS_PER_SECOND = 1000;
@@ -152,7 +151,6 @@ router.post('/register', validateRegistration, async (req, res) => {
       req.headers['user-agent']
     );
 
-    setRefreshCookie(res, refreshToken);
     return res.status(201).json({
       success: true,
       message: 'User registered successfully',
@@ -160,6 +158,7 @@ router.post('/register', validateRegistration, async (req, res) => {
         serverUserId: user._id.toString(),
         user: { id: user._id, name: user.name, email: user.email },
         accessToken,
+        refreshToken,
       },
     });
   } catch (error: any) {
@@ -262,7 +261,6 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       req.headers['user-agent']
     );
 
-    setRefreshCookie(res, refreshToken);
     return res.json({
       success: true,
       message: 'Login successful',
@@ -270,6 +268,7 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
         serverUserId: user._id.toString(),
         user: { id: user._id, name: user.name, email: user.email },
         accessToken,
+        refreshToken,
       },
     });
   } catch (error) {
@@ -281,11 +280,12 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
   }
 });
 
-// Refresh token (httpOnly cookie-based)
+// Refresh token (expects token in request body)
 router.post('/refresh', async (req, res) => {
   try {
-    const tokenFromCookie = req.cookies?.[refreshCookieName];
-    if (!tokenFromCookie) {
+    const incomingRefreshToken = req.body?.refreshToken as string | undefined;
+
+    if (!incomingRefreshToken) {
       return res.status(401).json({
         success: false,
         error: 'No refresh token',
@@ -295,7 +295,7 @@ router.post('/refresh', async (req, res) => {
     // Verify JWT signature first
     let payload;
     try {
-      payload = verifyRefreshToken(tokenFromCookie);
+      payload = verifyRefreshToken(incomingRefreshToken);
     } catch {
       return res.status(401).json({
         success: false,
@@ -304,7 +304,7 @@ router.post('/refresh', async (req, res) => {
     }
 
     // Hash token and check if it exists in database
-    const hashedToken = RefreshToken.hashToken(tokenFromCookie);
+    const hashedToken = RefreshToken.hashToken(incomingRefreshToken);
     const storedToken = await RefreshToken.findOne({
       token: hashedToken,
       isRevoked: false,
@@ -372,13 +372,12 @@ router.post('/refresh', async (req, res) => {
       req.headers['user-agent']
     );
 
-    setRefreshCookie(res, newRefreshToken);
-
     return res.json({
       success: true,
       message: 'Token refreshed successfully',
       data: {
         accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
       },
     });
   } catch (error) {
@@ -390,31 +389,26 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
-// Logout - invalidate refresh token and clear cookie
+// Logout - invalidate refresh token
 router.post('/logout', async (req, res) => {
   try {
-    const tokenFromCookie = req.cookies?.[refreshCookieName];
-    
-    if (tokenFromCookie) {
-      // Hash the token to find it in database
-      const hashedToken = RefreshToken.hashToken(tokenFromCookie);
-      
-      // Mark token as revoked (soft delete)
+    const tokenFromBody = req.body?.refreshToken as string | undefined;
+
+    if (tokenFromBody) {
+      const hashedToken = RefreshToken.hashToken(tokenFromBody);
+
       await RefreshToken.findOneAndUpdate(
         { token: hashedToken },
         { isRevoked: true }
       );
     }
-    
-    clearRefreshCookie(res);
+
     return res.json({
       success: true,
       message: 'Logged out successfully',
     });
   } catch (error) {
     console.error('Logout error:', error);
-    // Still clear cookie even if DB operation fails
-    clearRefreshCookie(res);
     return res.json({
       success: true,
       message: 'Logged out successfully',
@@ -443,9 +437,6 @@ router.post('/logout-all', authenticate, async (req: AuthRequest, res) => {
       { userId: user._id, isRevoked: false },
       { isRevoked: true }
     );
-    
-    // Clear current cookie
-    clearRefreshCookie(res);
     
     return res.json({
       success: true,
@@ -609,8 +600,6 @@ router.post('/oauth', async (req, res) => {
       req.headers['user-agent']
     );
 
-    setRefreshCookie(res, refreshToken);
-
     res.json({
       success: true,
       message: 'OAuth login successful',
@@ -622,6 +611,7 @@ router.post('/oauth', async (req, res) => {
           email: user.email!,
         },
         accessToken,
+        refreshToken,
       },
     });
   } catch (error) {
