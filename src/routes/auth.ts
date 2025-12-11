@@ -280,7 +280,7 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
   }
 });
 
-// Refresh token (httpOnly cookie-based)
+// Refresh token (expects token in request body)
 router.post('/refresh', async (req, res) => {
   try {
     const incomingRefreshToken = req.body?.refreshToken as string | undefined;
