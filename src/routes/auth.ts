@@ -138,6 +138,22 @@ router.post('/register', validateRegistration, async (req, res) => {
 
     if (existingUser) {
       if (existingUser.accountStatus === AccountStatus.PENDING_VERIFICATION) {
+        // Update password if provided (user may have forgotten it)
+        if (password) {
+          existingUser.password = password;
+        }
+
+        // Update name fields if provided
+        if (firstName) {
+          existingUser.firstName = firstName.trim();
+        }
+        if (lastName) {
+          existingUser.lastName = lastName.trim();
+        }
+        if (name) {
+          existingUser.name = name.trim();
+        }
+
         // Generate new verification token
         const verificationToken = crypto.randomBytes(32).toString('hex');
         const hashedToken = crypto
@@ -151,19 +167,34 @@ router.post('/register', validateRegistration, async (req, res) => {
 
         // Try to send email
         const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+        const displayName = existingUser.name || 
+          (existingUser.firstName && existingUser.lastName 
+            ? `${existingUser.firstName} ${existingUser.lastName}` 
+            : existingUser.firstName || existingUser.lastName || 'User');
+
+        if (!existingUser.email) {
+          return res.status(400).json({
+            success: false,
+            error: 'User email is missing. Please contact support.',
+          });
+        }
+
         try {
           await sendVerificationEmail(
-            existingUser.email!,
-            existingUser.name || `${existingUser.firstName} ${existingUser.lastName}`,
+            existingUser.email,
+            displayName,
             verificationUrl
           );
 
           return res.status(200).json({
             success: true,
-            message: 'A verification email has been resent. Please check your inbox.',
+            message: password 
+              ? 'Account updated and verification email resent. Please check your inbox.'
+              : 'A verification email has been resent. Please check your inbox.',
             data: {
               email: existingUser.email,
               requiresVerification: true,
+              passwordUpdated: !!password,
             },
           });
         } catch (emailError) {
@@ -171,11 +202,14 @@ router.post('/register', validateRegistration, async (req, res) => {
 
           return res.status(200).json({
             success: true,
-            message: 'Account exists but verification email could not be sent. Please use "Resend Verification" option.',
+            message: password
+              ? 'Account updated but verification email could not be sent. Please use "Resend Verification" option.'
+              : 'Account exists but verification email could not be sent. Please use "Resend Verification" option.',
             data: {
               email: existingUser.email,
               requiresVerification: true,
               emailFailed: true,
+              passwordUpdated: !!password,
             },
           });
         }
@@ -248,12 +282,17 @@ router.post('/register', validateRegistration, async (req, res) => {
     const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
     let emailSent = false;
 
-    try {
-      await sendVerificationEmail(user.email!, user.name || `${finalFirstName} ${finalLastName}`, verificationUrl);
-      emailSent = true;
-    } catch (emailError) {
-      console.error('Failed to send verification email:', emailError);
-      // Don't fail registration - user can request resend
+    if (user.email) {
+      try {
+        const displayName = user.name || `${finalFirstName} ${finalLastName}`.trim() || 'User';
+        await sendVerificationEmail(user.email, displayName, verificationUrl);
+        emailSent = true;
+      } catch (emailError) {
+        console.error('Failed to send verification email:', emailError);
+        // Don't fail registration - user can request resend
+      }
+    } else {
+      console.error('User email is missing, cannot send verification email.');
     }
 
     return res.status(201).json({
@@ -369,16 +408,25 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
     user.lastLoginAt = new Date();
     await user.save();
 
+    // Validate email exists before generating tokens
+    if (!user.email) {
+      console.error('User email is missing during login');
+      return res.status(500).json({
+        success: false,
+        error: 'User record is missing an email address. Please contact support.',
+      });
+    }
+
     // Generate tokens
     const accessToken = generateAccessToken({
       userId: user._id.toString(),
-      email: user.email!,
+      email: user.email,
       tokenVersion: user.tokenVersion,
     });
 
     const refreshToken = generateRefreshToken({
       userId: user._id.toString(),
-      email: user.email!,
+      email: user.email,
       tokenVersion: user.tokenVersion,
     });
 
@@ -403,17 +451,19 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       if (isNewDevice && existingSessions.length > 0) {
         // Only send alert if user has previous sessions (not first login)
         // Send suspicious login alert (async, don't wait)
-        sendSuspiciousLoginAlert(
-          user.email!,
-          user.name || `${user.firstName} ${user.lastName}`,
-          {
-            ipAddress,
-            deviceInfo,
-            timestamp: new Date().toLocaleString(),
-          }
-        ).catch((emailError) => {
-          console.error('Failed to send suspicious login alert:', emailError);
-        });
+        if (user.email) {
+          sendSuspiciousLoginAlert(
+            user.email,
+            user.name || `${user.firstName} ${user.lastName}`,
+            {
+              ipAddress,
+              deviceInfo,
+              timestamp: new Date().toLocaleString(),
+            }
+          ).catch((emailError) => {
+            console.error('Failed to send suspicious login alert:', emailError);
+          });
+        }
       }
     } catch (alertError) {
       console.error('Error checking suspicious login:', alertError);
@@ -516,15 +566,24 @@ router.post('/refresh', async (req, res) => {
     // Revoke old refresh token (token rotation)
     await RefreshToken.findByIdAndUpdate(storedToken._id, { isRevoked: true });
 
+    // Validate email exists before generating tokens
+    if (!user.email) {
+      console.error('User email is missing during token refresh');
+      return res.status(500).json({
+        success: false,
+        error: 'User record is missing an email address. Please contact support.',
+      });
+    }
+
     // Issue new tokens
     const newAccessToken = generateAccessToken({
       userId: user._id.toString(),
-      email: user.email!,
+      email: user.email,
       tokenVersion: user.tokenVersion,
     });
     const newRefreshToken = generateRefreshToken({
       userId: user._id.toString(),
-      email: user.email!,
+      email: user.email,
       tokenVersion: user.tokenVersion,
     });
 
@@ -762,16 +821,25 @@ router.post('/oauth', async (req, res) => {
     user.lastLoginAt = new Date();
     await user.save();
 
+    // Validate email exists before generating tokens
+    if (!user.email) {
+      console.error('User email is missing during OAuth login');
+      return res.status(500).json({
+        success: false,
+        error: 'User record is missing an email address. Please contact support.',
+      });
+    }
+
     // Generate tokens
     const accessToken = generateAccessToken({
       userId: user._id.toString(),
-      email: user.email!,
+      email: user.email,
       tokenVersion: user.tokenVersion,
     });
 
     const refreshToken = generateRefreshToken({
       userId: user._id.toString(),
-      email: user.email!,
+      email: user.email,
       tokenVersion: user.tokenVersion,
     });
 
@@ -796,7 +864,7 @@ router.post('/oauth', async (req, res) => {
         user: {
           id: user._id,
           name: user.name,
-          email: user.email!,
+          email: user.email,
         },
         accessToken,
         refreshToken,
@@ -869,8 +937,16 @@ router.post(
       });
 
       // Send reset email
+      if (!user.email) {
+        console.error('User email is missing, cannot send reset email');
+        return res.json({
+          success: true,
+          message: 'If that email exists, a reset link has been sent',
+        });
+      }
+
       try {
-        await sendPasswordResetEmail(user.email!, resetToken);
+        await sendPasswordResetEmail(user.email, resetToken);
       } catch (emailError) {
         console.error('Failed to send reset email:', emailError);
         // Don't fail the request if email fails
@@ -1031,11 +1107,15 @@ router.post(
       await user.save();
 
       // Send welcome email
-      try {
-        await sendWelcomeEmail(user.email!, user.name || `${user.firstName} ${user.lastName}`);
-      } catch (emailError) {
-        console.error('Failed to send welcome email:', emailError);
-        // Don't fail verification if email fails
+      if (!user.email) {
+        console.error('User email is missing, cannot send welcome email');
+      } else {
+        try {
+          await sendWelcomeEmail(user.email, user.name || `${user.firstName} ${user.lastName}`);
+        } catch (emailError) {
+          console.error('Failed to send welcome email:', emailError);
+          // Don't fail verification if email fails
+        }
       }
 
       res.json({
@@ -1114,12 +1194,16 @@ router.post(
       await user.save();
 
       // Send verification email
-      try {
-        const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
-        await sendVerificationEmail(user.email!, user.name || `${user.firstName} ${user.lastName}`, verificationUrl);
-      } catch (emailError) {
-        console.error('Failed to send verification email:', emailError);
-        // Don't fail the request if email fails
+      if (!user.email) {
+        console.error('User email is missing, cannot send verification email');
+      } else {
+        try {
+          const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+          await sendVerificationEmail(user.email, user.name || `${user.firstName} ${user.lastName}`, verificationUrl);
+        } catch (emailError) {
+          console.error('Failed to send verification email:', emailError);
+          // Don't fail the request if email fails
+        }
       }
 
       res.json({

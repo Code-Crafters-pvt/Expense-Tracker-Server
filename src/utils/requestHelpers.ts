@@ -46,7 +46,7 @@ export const parseFullName = (name: string | undefined): { firstName: string; la
     return { firstName: 'User', lastName: 'Name' };
   }
   
-  // If only one part, use it as firstName and set lastName to empty (will be set to "Name" below)
+  // If only one part, use it as firstName and set lastName to "Name"
   if (nameParts.length === 1) {
     return { firstName: nameParts[0], lastName: 'Name' };
   }

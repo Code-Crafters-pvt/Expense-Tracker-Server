@@ -3,7 +3,7 @@ import { body, validationResult } from 'express-validator';
 import { User } from '../models/User';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
-import { passwordChangeLimiter } from '../middleware/rateLimiter';
+import { passwordChangeLimiter, accountReactivateLimiter, accountReactivateFailureLimiter } from '../middleware/rateLimiter';
 import {
   sendPasswordChangedNotification,
   sendEmailChangedNotification,
@@ -18,7 +18,7 @@ import { AccountStatus } from '../enums/AccountStatus';
 const router = express.Router();
 
 // POST /api/users/account/reactivate - Reactivate account (public endpoint)
-router.post('/account/reactivate', [
+router.post('/account/reactivate', accountReactivateFailureLimiter, accountReactivateLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Please enter a valid email'),
   body('password').notEmpty().withMessage('Password is required'),
 ], async (req, res) => {
@@ -37,17 +37,19 @@ router.post('/account/reactivate', [
     // Find user
     const user = await User.findOne({ email }).select('+password');
 
+    // Security: Use generic error message to prevent user enumeration
+    // Don't reveal whether user exists, account status, or password validity
     if (!user) {
-      return res.status(404).json({
+      return res.status(401).json({
         success: false,
-        error: 'User not found',
+        error: 'Invalid email or password',
       });
     }
 
     if (user.accountStatus !== AccountStatus.DEACTIVATED) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
-        error: 'This account is not deactivated. Only deactivated accounts can be reactivated.',
+        error: 'Invalid email or password',
       });
     }
 
@@ -57,7 +59,7 @@ router.post('/account/reactivate', [
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid password',
+        error: 'Invalid email or password',
       });
     }
 
@@ -68,14 +70,18 @@ router.post('/account/reactivate', [
     await user.save();
 
     // Send reactivation email
-    try {
-      await sendAccountReactivationEmail(
-        user.email!,
-        user.name || `${user.firstName} ${user.lastName}`
-      );
-    } catch (emailError) {
-      console.error('Failed to send reactivation email:', emailError);
-      // Don't fail the request if email fails
+    if (!user.email) {
+      console.error('User email is missing, cannot send reactivation email');
+    } else {
+      try {
+        await sendAccountReactivationEmail(
+          user.email,
+          user.name || `${user.firstName} ${user.lastName}`
+        );
+      } catch (emailError) {
+        console.error('Failed to send reactivation email:', emailError);
+        // Don't fail the request if email fails
+      }
     }
 
     res.json({
@@ -333,12 +339,15 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     await user.save();
 
     // Send email change notification if email was changed
-    if (email && email !== oldEmail) {
+    // Note: oldEmail is checked for truthiness in the condition, ensuring type safety
+    if (email && oldEmail && email !== oldEmail) {
       try {
+        const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
+        // oldEmail is guaranteed to be defined here due to the condition above
         await sendEmailChangedNotification(
-          oldEmail!,
+          oldEmail,
           email,
-          user.name || `${user.firstName} ${user.lastName}`
+          displayName
         );
       } catch (emailError) {
         console.error('Failed to send email change notification:', emailError);
@@ -595,8 +604,8 @@ router.post('/account/delete', authenticate, [
     }
 
     // Store user info before deletion
-    const userEmail = user.email!;
-    const userName = user.name || `${user.firstName} ${user.lastName}`;
+    const userEmail = user.email;
+    const userName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
 
     // Schedule deletion for 30 days from now
     user.accountStatus = AccountStatus.DELETED;
@@ -613,12 +622,16 @@ router.post('/account/delete', authenticate, [
       { isRevoked: true }
     );
 
-    // Send deletion confirmation email
-    try {
-      await sendAccountDeletionEmail(userEmail, userName);
-    } catch (emailError) {
-      console.error('Failed to send deletion email:', emailError);
-      // Don't fail the request if email fails
+    // Send deletion confirmation email (only if email exists)
+    if (userEmail) {
+      try {
+        await sendAccountDeletionEmail(userEmail, userName);
+      } catch (emailError) {
+        console.error('Failed to send deletion email:', emailError);
+        // Don't fail the request if email fails
+      }
+    } else {
+      console.warn('Account deletion completed but email is missing, cannot send confirmation email.');
     }
 
     res.json({

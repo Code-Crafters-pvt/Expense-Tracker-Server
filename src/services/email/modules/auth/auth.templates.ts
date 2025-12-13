@@ -1,5 +1,21 @@
 import { getBaseEmailTemplate } from '../../core/templates.helper';
 
+/**
+ * Format date consistently for email templates
+ * Uses UTC timezone and en-US locale for consistent formatting across all server environments
+ */
+const formatEmailDate = (date: Date = new Date()): string => {
+  return date.toLocaleString('en-US', {
+    timeZone: 'UTC',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }) + ' UTC';
+};
+
 export const emailVerificationTemplate = (name: string, verificationLink: string) => {
   const content = `
     <p>Hi ${name},</p>
@@ -95,7 +111,7 @@ export const passwordChangedTemplate = (email: string, name: string) => {
     </div>
     <p><strong>Change Details:</strong></p>
     <ul>
-      <li>Time: ${new Date().toLocaleString()}</li>
+      <li>Time: ${formatEmailDate()}</li>
       <li>Account: ${email}</li>
     </ul>
     <p>For your security, you may need to log in again on other devices.</p>
@@ -111,7 +127,7 @@ export const passwordChangedTemplate = (email: string, name: string) => {
     ⚠️ If you didn't make this change, please contact support immediately.
     
     Change Details:
-    - Time: ${new Date().toLocaleString()}
+    - Time: ${formatEmailDate()}
     - Account: ${email}
     
     For your security, you may need to log in again on other devices.
@@ -133,7 +149,7 @@ export const emailChangedTemplate = (newEmail: string, name: string) => {
     </div>
     <p><strong>Change Details:</strong></p>
     <ul>
-      <li>Time: ${new Date().toLocaleString()}</li>
+      <li>Time: ${formatEmailDate()}</li>
       <li>New Email: ${newEmail}</li>
     </ul>
   `;
@@ -148,7 +164,7 @@ export const emailChangedTemplate = (newEmail: string, name: string) => {
     ⚠️ If you didn't make this change, please contact support immediately.
     
     Change Details:
-    - Time: ${new Date().toLocaleString()}
+    - Time: ${formatEmailDate()}
     - New Email: ${newEmail}
   `;
 
@@ -158,7 +174,7 @@ export const emailChangedTemplate = (newEmail: string, name: string) => {
   };
 };
 
-export const accountDeletionTemplate = (name: string) => {
+export const accountDeletionTemplate = (name: string, cancelDeletionUrl?: string) => {
   const content = `
     <p>Hi ${name},</p>
     <p>Your account deletion request has been confirmed.</p>
@@ -166,8 +182,10 @@ export const accountDeletionTemplate = (name: string) => {
     <ul>
       <li>Your account will be permanently deleted in 30 days</li>
       <li>All your data will be removed from our servers</li>
-      <li>You can cancel this request within 30 days by contacting support</li>
+      <li>You can cancel this request within 30 days using the "Cancel Deletion" option in your account settings</li>
     </ul>
+    ${cancelDeletionUrl ? `<p>To cancel your deletion, simply log in to your account and navigate to your account settings.</p>` : ''}
+    <p>If you need assistance, you can also contact our support team.</p>
     <p>We're sorry to see you go. If you'd like to provide feedback on why you're leaving, we'd appreciate it.</p>
   `;
 
@@ -181,13 +199,20 @@ export const accountDeletionTemplate = (name: string) => {
     What happens next:
     - Your account will be permanently deleted in 30 days
     - All your data will be removed from our servers
-    - You can cancel this request within 30 days by contacting support
+    - You can cancel this request within 30 days using the "Cancel Deletion" option in your account settings
+    
+    ${cancelDeletionUrl ? `To cancel your deletion, log in to your account and navigate to your account settings.\n\n` : ''}If you need assistance, you can also contact our support team.
     
     We're sorry to see you go. If you'd like to provide feedback, we'd appreciate it.
   `;
 
   return {
-    html: getBaseEmailTemplate('Account Deletion Confirmed', content),
+    html: getBaseEmailTemplate(
+      'Account Deletion Confirmed',
+      content,
+      cancelDeletionUrl ? 'Go to Account Settings' : undefined,
+      cancelDeletionUrl
+    ),
     text,
   };
 };

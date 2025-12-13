@@ -64,3 +64,39 @@ export const loginFailureLimiter = rateLimit({
     return `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`;
   },
 });
+
+// Rate limiter for account reactivation attempts (5 per 15 minutes per IP)
+// Similar to login since it requires password verification
+export const accountReactivateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per 15 minutes
+  message: {
+    success: false,
+    error: 'Too many reactivation attempts. Please try again in 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only count failed attempts
+  keyGenerator: (req) => {
+    // Use email + IP combination for better accuracy
+    return `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`;
+  },
+});
+
+// Short-term rate limiter for failed reactivation attempts (3 per 1 minute)
+// This provides quick cooldown after rapid failed attempts
+export const accountReactivateFailureLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 3, // 3 attempts per minute
+  message: {
+    success: false,
+    error: 'Too many failed reactivation attempts. Please wait 1 minute before trying again.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only count failed attempts
+  keyGenerator: (req) => {
+    // Use email + IP combination for better accuracy
+    return `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`;
+  },
+});

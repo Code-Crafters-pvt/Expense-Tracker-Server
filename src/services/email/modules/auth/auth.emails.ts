@@ -1,5 +1,4 @@
 import { sendEmail } from '../../core/maileroo.service';
-import { isMailerooConfigured } from '../../config/maileroo.config';
 import { MAILEROO_CONFIG } from '../../config/maileroo.config';
 import * as templates from './auth.templates';
 
@@ -11,15 +10,6 @@ export const sendVerificationEmail = async (
   name: string,
   verificationLink: string
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n📧 ============= VERIFICATION EMAIL =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log(`Link: ${verificationLink}`);
-    console.log('================================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.emailVerificationTemplate(name, verificationLink);
 
   return await sendEmail({
@@ -35,14 +25,6 @@ export const sendVerificationEmail = async (
  * Send welcome email after verification
  */
 export const sendWelcomeEmail = async (email: string, name: string): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n📧 ============= WELCOME EMAIL =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log('==========================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.welcomeEmailTemplate(name);
 
   return await sendEmail({
@@ -64,14 +46,6 @@ export const sendPasswordResetEmail = async (
   const resetUrl = `${MAILEROO_CONFIG.appUrl}/reset-password?token=${resetToken}`;
   const name = email.split('@')[0];
 
-  if (!isMailerooConfigured()) {
-    console.log('\n📧 ============= PASSWORD RESET EMAIL =============');
-    console.log(`To: ${email}`);
-    console.log(`Reset Link: ${resetUrl}`);
-    console.log('=================================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.passwordResetTemplate(resetUrl);
 
   return await sendEmail({
@@ -90,14 +64,6 @@ export const sendPasswordChangedNotification = async (
   email: string,
   name: string
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n🔒 ============= PASSWORD CHANGED =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log('==============================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.passwordChangedTemplate(email, name);
 
   return await sendEmail({
@@ -111,31 +77,26 @@ export const sendPasswordChangedNotification = async (
 
 /**
  * Send email changed notification (to both old and new email)
+ * Returns reference IDs for both emails sent
  */
 export const sendEmailChangedNotification = async (
   oldEmail: string,
   newEmail: string,
   name: string
-): Promise<void> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n📧 ============= EMAIL CHANGED =============');
-    console.log(`Old Email: ${oldEmail}`);
-    console.log(`New Email: ${newEmail}`);
-    console.log(`Name: ${name}`);
-    console.log('==========================================\n');
-    return;
-  }
-
+): Promise<{ oldEmail: string | null; newEmail: string | null }> => {
   const { html, text } = templates.emailChangedTemplate(newEmail, name);
 
-  // Send to both emails
-  await Promise.all([
+  // Send to both emails - handle errors individually so one failure doesn't prevent the other
+  const emailPromises = [
     sendEmail({
       to: oldEmail,
       toName: name,
       subject: 'Email Address Changed',
       html,
       text,
+    }).catch((error) => {
+      console.error(`Failed to send email change notification to old email (${oldEmail}):`, error.message);
+      return null; // Return null instead of throwing to allow both emails to be attempted
     }),
     sendEmail({
       to: newEmail,
@@ -143,8 +104,18 @@ export const sendEmailChangedNotification = async (
       subject: 'Email Address Changed',
       html,
       text,
+    }).catch((error) => {
+      console.error(`Failed to send email change notification to new email (${newEmail}):`, error.message);
+      return null; // Return null instead of throwing to allow both emails to be attempted
     }),
-  ]);
+  ];
+
+  const results = await Promise.all(emailPromises);
+
+  return {
+    oldEmail: results[0] || null,
+    newEmail: results[1] || null,
+  };
 };
 
 /**
@@ -154,15 +125,9 @@ export const sendAccountDeletionEmail = async (
   email: string,
   name: string
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n🗑️ ============= ACCOUNT DELETION =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log('==============================================\n');
-    return 'console-logged';
-  }
-
-  const { html, text } = templates.accountDeletionTemplate(name);
+  // Provide link to app where user can log in and cancel deletion
+  const cancelDeletionUrl = `${MAILEROO_CONFIG.appUrl}/settings`;
+  const { html, text } = templates.accountDeletionTemplate(name, cancelDeletionUrl);
 
   return await sendEmail({
     to: email,
@@ -181,15 +146,6 @@ export const sendTwoFactorCode = async (
   name: string,
   code: string
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n🔐 ============= 2FA CODE =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log(`Code: ${code}`);
-    console.log('======================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.twoFactorCodeTemplate(name, code);
 
   return await sendEmail({
@@ -208,14 +164,6 @@ export const sendAccountReactivationEmail = async (
   email: string,
   name: string
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n✅ ============= ACCOUNT REACTIVATION =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log('==================================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.accountReactivationTemplate(name);
 
   return await sendEmail({
@@ -234,14 +182,6 @@ export const sendAccountDeactivationEmail = async (
   email: string,
   name: string
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n⏸️ ============= ACCOUNT DEACTIVATION =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log('==================================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.accountDeactivationTemplate(name);
 
   return await sendEmail({
@@ -266,17 +206,6 @@ export const sendSuspiciousLoginAlert = async (
     timestamp: string;
   }
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n⚠️ ============= SUSPICIOUS LOGIN =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log(`IP: ${loginDetails.ipAddress || 'Unknown'}`);
-    console.log(`Device: ${loginDetails.deviceInfo || 'Unknown'}`);
-    console.log(`Time: ${loginDetails.timestamp}`);
-    console.log('================================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.suspiciousLoginTemplate(name, loginDetails);
 
   return await sendEmail({
@@ -300,17 +229,6 @@ export const sendSessionRevokedNotification = async (
     revokedAt: string;
   }
 ): Promise<string> => {
-  if (!isMailerooConfigured()) {
-    console.log('\n🔒 ============= SESSION REVOKED =============');
-    console.log(`To: ${email}`);
-    console.log(`Name: ${name}`);
-    console.log(`Device: ${sessionDetails.deviceInfo || 'Unknown'}`);
-    console.log(`IP: ${sessionDetails.ipAddress || 'Unknown'}`);
-    console.log(`Revoked at: ${sessionDetails.revokedAt}`);
-    console.log('==============================================\n');
-    return 'console-logged';
-  }
-
   const { html, text } = templates.sessionRevokedTemplate(name, sessionDetails);
 
   return await sendEmail({

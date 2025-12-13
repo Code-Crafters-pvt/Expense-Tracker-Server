@@ -15,4 +15,3 @@ export {
 // Re-export expense emails (when implemented)
 // export { ... } from './modules/expense/expense.emails';
 
-export { isMailerooConfigured } from './config/maileroo.config';
