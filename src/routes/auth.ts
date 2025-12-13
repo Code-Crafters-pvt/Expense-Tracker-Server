@@ -10,7 +10,12 @@ import { isTokenVersionValid } from '../utils/authChecks';
 import authConfig from '../config/authConfig';
 import { ResetToken } from '../models/ResetToken';
 import { RefreshToken } from '../models/RefreshToken';
-import { sendPasswordResetEmail } from '../services/emailService';
+import {
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+  sendWelcomeEmail,
+} from '../services/email';
+import { AccountStatus } from '../enums/AccountStatus';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
 import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/requestHelpers';
@@ -65,7 +70,18 @@ const googleClient = new OAuth2Client(
 
 // Validation middleware
 const validateRegistration = [
+  body('firstName')
+    .optional()
+    .trim()
+    .isLength({ min: 1, max: 25 })
+    .withMessage('First name must be between 1 and 25 characters'),
+  body('lastName')
+    .optional()
+    .trim()
+    .isLength({ min: 1, max: 25 })
+    .withMessage('Last name must be between 1 and 25 characters'),
   body('name')
+    .optional()
     .trim()
     .isLength({ min: 2, max: 50 })
     .withMessage('Name must be between 2 and 50 characters'),
@@ -82,6 +98,16 @@ const validateRegistration = [
       }
       return true;
     }),
+  // Custom validation: require either firstName+lastName OR name
+  body().custom((value) => {
+    const hasFirstNameLastName = value.firstName && value.lastName;
+    const hasName = value.name;
+    
+    if (!hasFirstNameLastName && !hasName) {
+      throw new Error('Either firstName and lastName, or name must be provided');
+    }
+    return true;
+  }),
 ];
 
 const validateLogin = [
@@ -95,16 +121,7 @@ const validateLogin = [
 // Register user
 router.post('/register', validateRegistration, async (req, res) => {
   try {
-    // 'name' is accepted for backward compatibility; we derive firstName/lastName as primary fields
-    const { name, email, password } = req.body;
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'User with this email already exists',
-      });
-    }
+    const { firstName, lastName, name, email, password } = req.body;
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -115,55 +132,144 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    const { firstName, lastName } = parseFullName(name);
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      if (existingUser.accountStatus === AccountStatus.PENDING_VERIFICATION) {
+        // Generate new verification token
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+        const hashedToken = crypto
+          .createHash('sha256')
+          .update(verificationToken)
+          .digest('hex');
+
+        existingUser.emailVerificationToken = hashedToken;
+        existingUser.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        await existingUser.save();
+
+        // Try to send email
+        const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+        try {
+          await sendVerificationEmail(
+            existingUser.email!,
+            existingUser.name || `${existingUser.firstName} ${existingUser.lastName}`,
+            verificationUrl
+          );
+
+          return res.status(200).json({
+            success: true,
+            message: 'A verification email has been resent. Please check your inbox.',
+            data: {
+              email: existingUser.email,
+              requiresVerification: true,
+            },
+          });
+        } catch (emailError) {
+          console.error('Failed to resend verification email:', emailError);
+
+          return res.status(200).json({
+            success: true,
+            message: 'Account exists but verification email could not be sent. Please use "Resend Verification" option.',
+            data: {
+              email: existingUser.email,
+              requiresVerification: true,
+              emailFailed: true,
+            },
+          });
+        }
+      }
+
+      // User exists and is not PENDING_VERIFICATION
+      if (existingUser.accountStatus === AccountStatus.DELETED) {
+        return res.status(400).json({
+          success: false,
+          error: 'This account is scheduled for deletion. Please contact support to restore it, or use the "Cancel Deletion" option if within the 30-day grace period.',
+        });
+      }
+
+      if (existingUser.accountStatus === AccountStatus.DEACTIVATED) {
+        return res.status(400).json({
+          success: false,
+          error: 'This account is deactivated. Please use "Reactivate Account" option.',
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: 'An account with this email already exists',
+      });
+    }
+
+    // Create new user
+    let finalFirstName: string;
+    let finalLastName: string;
+    
+    if (firstName && lastName) {
+      finalFirstName = firstName.trim();
+      finalLastName = lastName.trim();
+    } else if (name) {
+      const parsed = parseFullName(name);
+      finalFirstName = parsed.firstName;
+      finalLastName = parsed.lastName;
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: [
+          { field: 'firstName', message: 'First name is required' },
+          { field: 'lastName', message: 'Last name is required' },
+        ],
+      });
+    }
+
+    // Generate email verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedVerificationToken = crypto
+      .createHash('sha256')
+      .update(verificationToken)
+      .digest('hex');
 
     const user = new User({
-      firstName,
-      lastName,
-      name,
+      firstName: finalFirstName,
+      lastName: finalLastName,
+      name: name || `${finalFirstName} ${finalLastName}`.trim(),
       email,
       password,
+      accountStatus: AccountStatus.PENDING_VERIFICATION,
+      emailVerificationToken: hashedVerificationToken,
+      emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
     });
 
     await user.save();
 
-    const accessToken = generateAccessToken({
-      userId: user._id.toString(),
-      email: user.email!,
-      tokenVersion: user.tokenVersion,
-    });
+    // Try to send verification email
+    const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+    let emailSent = false;
 
-    const refreshToken = generateRefreshToken({
-      userId: user._id.toString(),
-      email: user.email!,
-      tokenVersion: user.tokenVersion,
-    });
-
-    const deviceInfo = getDeviceInfo(req);
-    const ipAddress = getClientIpAddress(req);
-    
-    await RefreshToken.createRefreshToken(
-      user._id,
-      refreshToken,
-      getTokenExpirationDate(refreshTokenTtl),
-      deviceInfo,
-      ipAddress,
-      req.headers['user-agent']
-    );
+    try {
+      await sendVerificationEmail(user.email!, user.name || `${finalFirstName} ${finalLastName}`, verificationUrl);
+      emailSent = true;
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+      // Don't fail registration - user can request resend
+    }
 
     return res.status(201).json({
       success: true,
-      message: 'User registered successfully',
+      message: emailSent
+        ? 'Registration successful! Please check your email to verify your account.'
+        : 'Registration successful! Verification email could not be sent. Please use "Resend Verification" option.',
       data: {
-        serverUserId: user._id.toString(),
-        user: { id: user._id, name: user.name, email: user.email },
-        accessToken,
-        refreshToken,
+        email: user.email,
+        name: user.name,
+        requiresVerification: true,
+        emailSent,
       },
     });
   } catch (error: any) {
     console.error('Registration error:', error);
-    
+
     // Handle Mongoose validation errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map((err: any) => err.message);
@@ -173,7 +279,7 @@ router.post('/register', validateRegistration, async (req, res) => {
         details: errors,
       });
     }
-    
+
     // Handle duplicate key error (email already exists)
     if (error.code === 11000) {
       return res.status(400).json({
@@ -181,11 +287,11 @@ router.post('/register', validateRegistration, async (req, res) => {
         error: 'User with this email already exists',
       });
     }
-    
+
     // Other server errors
     res.status(500).json({
       success: false,
-      error: 'Server error during registration',
+      error: 'Registration failed',
     });
   }
 });
@@ -210,15 +316,42 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
     if (!user) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid email or password',
+        error: 'Invalid credentials',
       });
     }
 
-    // Check if account is active
-    if (!user.isActive) {
+    // Check account status
+    if (user.accountStatus === AccountStatus.PENDING_VERIFICATION) {
       return res.status(403).json({
         success: false,
-        error: 'Account has been deactivated. Please contact support.',
+        error: 'Please verify your email before logging in. Check your inbox or use "Resend Verification".',
+        code: 'EMAIL_NOT_VERIFIED',
+        email: user.email,
+      });
+    }
+
+    if (user.accountStatus === AccountStatus.SUSPENDED) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account has been suspended. Please contact support.',
+        code: 'ACCOUNT_SUSPENDED',
+      });
+    }
+
+    if (user.accountStatus === AccountStatus.DEACTIVATED) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account is deactivated. Please reactivate it to continue.',
+        code: 'ACCOUNT_DEACTIVATED',
+        email: user.email,
+      });
+    }
+
+    if (user.accountStatus === AccountStatus.DELETED) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account is scheduled for deletion. Please contact support to restore it.',
+        code: 'ACCOUNT_DELETED',
       });
     }
 
@@ -227,7 +360,7 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid email or password',
+        error: 'Invalid credentials',
       });
     }
 
@@ -558,15 +691,34 @@ router.post('/oauth', async (req, res) => {
           .toString('base64')
           .replace(/[^a-zA-Z0-9]/g, '')
           .slice(0, 8),
+        // OAuth providers already verify emails, so mark as active
+        accountStatus: AccountStatus.ACTIVE,
       });
       await user.save();
     }
 
-    // Check if account is active
-    if (!user.isActive) {
+    // Check account status
+    if (user.accountStatus === AccountStatus.SUSPENDED) {
       return res.status(403).json({
         success: false,
-        error: 'Account has been deactivated. Please contact support.',
+        error: 'Your account has been suspended. Please contact support.',
+        code: 'ACCOUNT_SUSPENDED',
+      });
+    }
+
+    if (user.accountStatus === AccountStatus.DEACTIVATED) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account is deactivated. Please reactivate it to continue.',
+        code: 'ACCOUNT_DEACTIVATED',
+      });
+    }
+
+    if (user.accountStatus === AccountStatus.DELETED) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your account is scheduled for deletion. Please contact support to restore it.',
+        code: 'ACCOUNT_DELETED',
       });
     }
 
@@ -783,6 +935,166 @@ router.post(
       res.status(500).json({
         success: false,
         error: 'Server error during password reset',
+      });
+    }
+  }
+);
+
+// Verify email address
+router.post(
+  '/verify-email',
+  [
+    body('token')
+      .notEmpty()
+      .withMessage('Verification token is required'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array(),
+        });
+      }
+
+      const { token } = req.body;
+
+      // Hash the provided token to match stored hash
+      const hashedToken = crypto
+        .createHash('sha256')
+        .update(token)
+        .digest('hex');
+
+      // Find user with matching token and non-expired date
+      const user = await User.findOne({
+        emailVerificationToken: hashedToken,
+        emailVerificationExpires: { $gt: new Date() },
+      }).select('+emailVerificationToken');
+
+      if (!user) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid or expired verification token',
+        });
+      }
+
+      // Check if already verified
+      if (user.accountStatus === AccountStatus.ACTIVE) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email is already verified',
+        });
+      }
+
+      // Update account status
+      user.accountStatus = AccountStatus.ACTIVE;
+      user.emailVerificationToken = undefined;
+      user.emailVerificationExpires = undefined;
+      await user.save();
+
+      // Send welcome email
+      try {
+        await sendWelcomeEmail(user.email!, user.name || `${user.firstName} ${user.lastName}`);
+      } catch (emailError) {
+        console.error('Failed to send welcome email:', emailError);
+        // Don't fail verification if email fails
+      }
+
+      res.json({
+        success: true,
+        message: 'Email verified successfully! You can now log in.',
+        data: {
+          user: {
+            id: user._id,
+            email: user.email,
+            isEmailVerified: true,
+          },
+        },
+      });
+    } catch (error) {
+      console.error('Verify email error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Server error during email verification',
+      });
+    }
+  }
+);
+
+// Resend verification email
+router.post(
+  '/resend-verification',
+  passwordResetLimiter, // Reuse rate limiter for security
+  [
+    body('email')
+      .isEmail()
+      .normalizeEmail()
+      .withMessage('Please enter a valid email'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array(),
+        });
+      }
+
+      const { email } = req.body;
+
+      // Find user by email
+      const user = await User.findOne({ email }).select('+emailVerificationToken');
+
+      // Always return success (security: don't reveal if email exists)
+      if (!user) {
+        return res.json({
+          success: true,
+          message: 'If that email exists and is not verified, a verification link has been sent',
+        });
+      }
+
+      // Check if already verified
+      if (user.accountStatus === AccountStatus.ACTIVE) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email is already verified',
+        });
+      }
+
+      // Generate new verification token
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const hashedVerificationToken = crypto
+        .createHash('sha256')
+        .update(verificationToken)
+        .digest('hex');
+
+      // Update user with new token
+      user.emailVerificationToken = hashedVerificationToken;
+      user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      await user.save();
+
+      // Send verification email
+      try {
+        const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+        await sendVerificationEmail(user.email!, user.name || `${user.firstName} ${user.lastName}`, verificationUrl);
+      } catch (emailError) {
+        console.error('Failed to send verification email:', emailError);
+        // Don't fail the request if email fails
+      }
+
+      res.json({
+        success: true,
+        message: 'If that email exists and is not verified, a verification link has been sent',
+      });
+    } catch (error) {
+      console.error('Resend verification error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Server error during resend verification',
       });
     }
   }

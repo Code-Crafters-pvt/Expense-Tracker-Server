@@ -28,13 +28,32 @@ export const getDeviceInfo = (req: Request): string => {
 
 /**
  * Parses a full name into firstName and lastName components
+ * Handles edge cases: empty names, single names, etc.
  * @param name Full name string
- * @returns Object containing firstName and lastName
+ * @returns Object containing firstName and lastName (guaranteed non-empty)
  */
-export const parseFullName = (name: string): { firstName: string; lastName: string } => {
-  const nameParts = name.trim().split(' ');
-  const firstName = nameParts[0] || '';
-  const lastName = nameParts.slice(1).join(' ') || '';
+export const parseFullName = (name: string | undefined): { firstName: string; lastName: string } => {
+  // Handle undefined, null, or empty strings
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return { firstName: 'User', lastName: 'Name' };
+  }
+
+  const trimmedName = name.trim();
+  const nameParts = trimmedName.split(/\s+/).filter(part => part.length > 0);
+  
+  // If no valid parts, return defaults
+  if (nameParts.length === 0) {
+    return { firstName: 'User', lastName: 'Name' };
+  }
+  
+  // If only one part, use it as firstName and set lastName to empty (will be set to "Name" below)
+  if (nameParts.length === 1) {
+    return { firstName: nameParts[0], lastName: 'Name' };
+  }
+  
+  // Multiple parts: first is firstName, rest is lastName
+  const firstName = nameParts[0];
+  const lastName = nameParts.slice(1).join(' ');
   
   return { firstName, lastName };
 };

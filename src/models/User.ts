@@ -1,17 +1,23 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { UserRole } from '../enums/UserRole';
+import { AccountStatus } from '../enums/AccountStatus';
 
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId;
   firstName: string;
   lastName: string;
-  name?: string; // Computed field for backward compatibility
+  name?: string;
   email: string;
   password: string;
   role: UserRole;
   isActive: boolean;
+  accountStatus: AccountStatus;
   isEmailVerified: boolean;
+  emailVerificationToken?: string;
+  emailVerificationExpires?: Date;
+  deactivatedAt?: Date;
+  scheduledDeletionDate?: Date;
   tokenVersion: number;
   lastLoginAt?: Date;
   
@@ -36,7 +42,7 @@ const userSchema = new Schema<IUser>(
     },
     name: {
       type: String,
-      required: false, // Computed field
+      required: false,
       trim: true,
       maxlength: [50, 'Name cannot be more than 50 characters'],
     },
@@ -67,9 +73,29 @@ const userSchema = new Schema<IUser>(
       default: true,
       index: true,
     },
+    accountStatus: {
+      type: String,
+      enum: Object.values(AccountStatus),
+      default: AccountStatus.PENDING_VERIFICATION,
+      required: true,
+      index: true,
+    },
     isEmailVerified: {
       type: Boolean,
-      default: true, // Defaults to true for existing users, will be false for new registrations with email verification
+      default: false,
+    },
+    emailVerificationToken: {
+      type: String,
+      select: false, // Don't include in queries by default
+    },
+    emailVerificationExpires: {
+      type: Date,
+    },
+    deactivatedAt: {
+      type: Date,
+    },
+    scheduledDeletionDate: {
+      type: Date,
     },
     tokenVersion: {
       type: Number,
@@ -95,6 +121,10 @@ const userSchema = new Schema<IUser>(
 
 userSchema.pre('save', async function (next) {
   this.name = [this.firstName, this.lastName].filter(Boolean).join(' ').trim();
+
+  if (this.isModified('accountStatus') || this.isNew) {
+    this.isEmailVerified = this.accountStatus === AccountStatus.ACTIVE;
+  }
 
   if (this.password && this.isModified('password')) {
     try {
