@@ -8,6 +8,9 @@ import {
   sendPasswordChangedNotification,
   sendEmailChangedNotification,
   sendAccountDeletionEmail,
+  sendAccountReactivationEmail,
+  sendAccountDeactivationEmail,
+  sendSessionRevokedNotification,
 } from '../services/email';
 import { RefreshToken } from '../models/RefreshToken';
 import { AccountStatus } from '../enums/AccountStatus';
@@ -63,6 +66,17 @@ router.post('/account/reactivate', [
     user.deactivatedAt = undefined;
     user.isActive = true;
     await user.save();
+
+    // Send reactivation email
+    try {
+      await sendAccountReactivationEmail(
+        user.email!,
+        user.name || `${user.firstName} ${user.lastName}`
+      );
+    } catch (emailError) {
+      console.error('Failed to send reactivation email:', emailError);
+      // Don't fail the request if email fails
+    }
 
     res.json({
       success: true,
@@ -127,61 +141,17 @@ const validateUpdateProfile = [
     .trim()
     .isLength({ min: 1, max: 25 })
     .withMessage('Last name must be between 1 and 25 characters'),
+  body('name')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Name must be between 2 and 50 characters'),
+  body('email')
+    .optional()
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please enter a valid email'),
 ];
-
-router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequest, res) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        error: 'User not authenticated',
-      });
-    }
-
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors.array(),
-      });
-    }
-
-    const { firstName, lastName } = req.body;
-    const user = req.user;
-
-    if (firstName !== undefined) user.firstName = firstName;
-    if (lastName !== undefined) user.lastName = lastName;
-
-    await user.save();
-
-    return res.json({
-      success: true,
-      message: 'Profile updated successfully',
-      data: {
-        user: {
-          id: user._id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          isActive: user.isActive,
-          isEmailVerified: user.isEmailVerified,
-          lastLoginAt: user.lastLoginAt,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error while updating profile',
-    });
-  }
-});
 
 router.use(authenticate);
 
@@ -295,106 +265,114 @@ router.post(
   }
 );
 
-// PUT /api/users/profile - Update user profile (name, email)
-router.put(
-  '/profile',
-  [
-    body('name')
-      .optional()
-      .trim()
-      .isLength({ min: 2, max: 50 })
-      .withMessage('Name must be between 2 and 50 characters'),
-    body('email')
-      .optional()
-      .isEmail()
-      .normalizeEmail()
-      .withMessage('Please enter a valid email'),
-  ],
-  async (req: AuthRequest, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          error: 'User not authenticated',
-        });
-      }
-      
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({
-          success: false,
-          error: 'Validation failed',
-          details: errors.array(),
-        });
-      }
-
-      const { name, email } = req.body;
-      const updateData: any = {};
-      const oldEmail = req.user.email;
-
-      if (name) updateData.name = name;
-      
-      if (email && email !== req.user.email) {
-        // Check if email is already taken
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-          return res.status(400).json({
-            success: false,
-            error: 'Email is already in use',
-          });
-        }
-        updateData.email = email;
-      }
-
-      const user = await User.findByIdAndUpdate(
-        req.user._id,
-        updateData,
-        { new: true, runValidators: true }
-      ).select('-password');
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found',
-        });
-      }
-
-      // Send email change notification if email was changed
-      if (email && email !== oldEmail) {
-        try {
-          await sendEmailChangedNotification(
-            oldEmail!,
-            email,
-            user.name || `${user.firstName} ${user.lastName}`
-          );
-        } catch (emailError) {
-          console.error('Failed to send email change notification:', emailError);
-          // Don't fail the request if email fails
-        }
-      }
-
-      res.json({
-        success: true,
-        message: 'Profile updated successfully',
-        data: {
-          user: {
-            id: user._id,
-            name: user.name,
-            email: user.email,
-            createdAt: user.createdAt,
-            updatedAt: user.updatedAt,
-          },
-        },
-      });
-    } catch (error) {
-      console.error('Update profile error:', error);
-      res.status(500).json({
+// PUT /api/users/profile - Update user profile (firstName, lastName, name, email)
+router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequest, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
         success: false,
-        error: 'Server error while updating profile',
+        error: 'User not authenticated',
       });
     }
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors.array(),
+      });
+    }
+
+    const { firstName, lastName, name, email } = req.body;
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found',
+      });
+    }
+
+    const oldEmail = user.email;
+    const updateData: any = {};
+
+    // Update firstName if provided
+    if (firstName !== undefined) {
+      user.firstName = firstName;
+    }
+
+    // Update lastName if provided
+    if (lastName !== undefined) {
+      user.lastName = lastName;
+    }
+
+    // Update name if provided (will be auto-generated from firstName+lastName in pre-save hook if not provided)
+    if (name !== undefined) {
+      updateData.name = name;
+    }
+
+    // Update email if provided and different
+    if (email && email !== oldEmail) {
+      // Check if email is already taken
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email is already in use',
+        });
+      }
+      updateData.email = email;
+    }
+
+    // Apply updates
+    if (Object.keys(updateData).length > 0) {
+      Object.assign(user, updateData);
+    }
+
+    await user.save();
+
+    // Send email change notification if email was changed
+    if (email && email !== oldEmail) {
+      try {
+        await sendEmailChangedNotification(
+          oldEmail!,
+          email,
+          user.name || `${user.firstName} ${user.lastName}`
+        );
+      } catch (emailError) {
+        console.error('Failed to send email change notification:', emailError);
+        // Don't fail the request if email fails
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: {
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          isActive: user.isActive,
+          isEmailVerified: user.isEmailVerified,
+          lastLoginAt: user.lastLoginAt,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error while updating profile',
+    });
   }
-);
+});
 
 // GET /api/users/sessions - View active sessions
 router.get('/sessions', async (req: AuthRequest, res) => {
@@ -473,6 +451,22 @@ router.delete('/sessions/:id', async (req: AuthRequest, res) => {
     session.isRevoked = true;
     await session.save();
 
+    // Send session revoked notification
+    try {
+      await sendSessionRevokedNotification(
+        user.email!,
+        user.name || `${user.firstName} ${user.lastName}`,
+        {
+          deviceInfo: session.deviceInfo,
+          ipAddress: session.ipAddress,
+          revokedAt: new Date().toLocaleString(),
+        }
+      );
+    } catch (emailError) {
+      console.error('Failed to send session revoked notification:', emailError);
+      // Don't fail the request if email fails
+    }
+
     res.json({
       success: true,
       message: 'Session revoked successfully',
@@ -526,6 +520,17 @@ router.post('/account/deactivate', authenticate, async (req: AuthRequest, res) =
       { userId: user._id, isRevoked: false },
       { isRevoked: true }
     );
+
+    // Send deactivation email
+    try {
+      await sendAccountDeactivationEmail(
+        user.email!,
+        user.name || `${user.firstName} ${user.lastName}`
+      );
+    } catch (emailError) {
+      console.error('Failed to send deactivation email:', emailError);
+      // Don't fail the request if email fails
+    }
 
     res.json({
       success: true,

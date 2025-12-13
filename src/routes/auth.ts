@@ -14,6 +14,7 @@ import {
   sendPasswordResetEmail,
   sendVerificationEmail,
   sendWelcomeEmail,
+  sendSuspiciousLoginAlert,
 } from '../services/email';
 import { AccountStatus } from '../enums/AccountStatus';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
@@ -381,10 +382,45 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       tokenVersion: user.tokenVersion,
     });
 
-    // Store refresh token in database
+    // Get device info and IP before creating session
     const deviceInfo = getDeviceInfo(req);
     const ipAddress = getClientIpAddress(req);
     
+    // Check for suspicious login (new device/IP) before creating session
+    try {
+      // Check if this is a new device/IP by looking at existing active sessions
+      const existingSessions = await RefreshToken.find({
+        userId: user._id,
+        isRevoked: false,
+      }).limit(5); // Check last 5 sessions
+
+      // If user has existing sessions, check if this is a new device/IP
+      const isNewDevice = existingSessions.length === 0 || 
+        !existingSessions.some(session => 
+          session.deviceInfo === deviceInfo && session.ipAddress === ipAddress
+        );
+
+      if (isNewDevice && existingSessions.length > 0) {
+        // Only send alert if user has previous sessions (not first login)
+        // Send suspicious login alert (async, don't wait)
+        sendSuspiciousLoginAlert(
+          user.email!,
+          user.name || `${user.firstName} ${user.lastName}`,
+          {
+            ipAddress,
+            deviceInfo,
+            timestamp: new Date().toLocaleString(),
+          }
+        ).catch((emailError) => {
+          console.error('Failed to send suspicious login alert:', emailError);
+        });
+      }
+    } catch (alertError) {
+      console.error('Error checking suspicious login:', alertError);
+      // Don't fail login if alert check fails
+    }
+
+    // Store refresh token in database
     await RefreshToken.createRefreshToken(
       user._id,
       refreshToken,

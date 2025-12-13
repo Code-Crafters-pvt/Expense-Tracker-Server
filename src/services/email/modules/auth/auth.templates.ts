@@ -219,3 +219,164 @@ export const twoFactorCodeTemplate = (name: string, code: string) => {
   };
 };
 
+export const accountReactivationTemplate = (name: string) => {
+  const content = `
+    <p>Hi ${name},</p>
+    <p>Your Expense Tracker account has been successfully reactivated!</p>
+    <p>You can now log in and access all your account features.</p>
+    <p><strong>What you can do now:</strong></p>
+    <ul>
+      <li>📊 Access your expense history</li>
+      <li>📈 View your analytics and reports</li>
+      <li>💰 Continue tracking your expenses</li>
+      <li>⚙️ Manage your account settings</li>
+    </ul>
+    <p>Welcome back! If you have any questions, feel free to contact our support team.</p>
+  `;
+
+  const text = `
+    Account Reactivated
+    
+    Hi ${name},
+    
+    Your Expense Tracker account has been successfully reactivated!
+    
+    You can now log in and access all your account features.
+    
+    Welcome back! If you have any questions, feel free to contact our support team.
+  `;
+
+  return {
+    html: getBaseEmailTemplate('Account Reactivated', content),
+    text,
+  };
+};
+
+export const accountDeactivationTemplate = (name: string) => {
+  const content = `
+    <p>Hi ${name},</p>
+    <p>Your Expense Tracker account has been deactivated.</p>
+    <p><strong>What this means:</strong></p>
+    <ul>
+      <li>You won't be able to log in to your account</li>
+      <li>Your data will be preserved and can be restored when you reactivate</li>
+      <li>You can reactivate your account anytime by logging in</li>
+    </ul>
+    <p>If you didn't request this deactivation, please contact our support team immediately.</p>
+    <p>We're sorry to see you go. If you'd like to provide feedback, we'd appreciate it.</p>
+  `;
+
+  const text = `
+    Account Deactivated
+    
+    Hi ${name},
+    
+    Your Expense Tracker account has been deactivated.
+    
+    You won't be able to log in, but your data will be preserved. You can reactivate your account anytime by logging in.
+    
+    If you didn't request this deactivation, please contact our support team immediately.
+  `;
+
+  return {
+    html: getBaseEmailTemplate('Account Deactivated', content),
+    text,
+  };
+};
+
+export const suspiciousLoginTemplate = (
+  name: string,
+  loginDetails: {
+    ipAddress?: string;
+    deviceInfo?: string;
+    location?: string;
+    timestamp: string;
+  }
+) => {
+  const content = `
+    <p>Hi ${name},</p>
+    <p>We detected a new login to your Expense Tracker account.</p>
+    <div class="alert-box">
+      <strong>⚠️ Security Alert:</strong><br>
+      If this wasn't you, please secure your account immediately by changing your password.
+    </div>
+    <p><strong>Login Details:</strong></p>
+    <ul>
+      <li>Time: ${loginDetails.timestamp}</li>
+      ${loginDetails.deviceInfo ? `<li>Device: ${loginDetails.deviceInfo}</li>` : ''}
+      ${loginDetails.ipAddress ? `<li>IP Address: ${loginDetails.ipAddress}</li>` : ''}
+      ${loginDetails.location ? `<li>Location: ${loginDetails.location}</li>` : ''}
+    </ul>
+    <p>If this was you, you can safely ignore this email.</p>
+    <p>If you don't recognize this activity, please change your password immediately and review your account security settings.</p>
+  `;
+
+  const text = `
+    Suspicious Login Alert
+    
+    Hi ${name},
+    
+    We detected a new login to your Expense Tracker account.
+    
+    ⚠️ If this wasn't you, please secure your account immediately.
+    
+    Login Details:
+    - Time: ${loginDetails.timestamp}
+    ${loginDetails.deviceInfo ? `- Device: ${loginDetails.deviceInfo}` : ''}
+    ${loginDetails.ipAddress ? `- IP Address: ${loginDetails.ipAddress}` : ''}
+    ${loginDetails.location ? `- Location: ${loginDetails.location}` : ''}
+    
+    If you don't recognize this activity, please change your password immediately.
+  `;
+
+  return {
+    html: getBaseEmailTemplate('New Login Detected', content),
+    text,
+  };
+};
+
+export const sessionRevokedTemplate = (
+  name: string,
+  sessionDetails: {
+    deviceInfo?: string;
+    ipAddress?: string;
+    revokedAt: string;
+  }
+) => {
+  const content = `
+    <p>Hi ${name},</p>
+    <p>A session for your Expense Tracker account has been revoked.</p>
+    <p><strong>Session Details:</strong></p>
+    <ul>
+      ${sessionDetails.deviceInfo ? `<li>Device: ${sessionDetails.deviceInfo}</li>` : ''}
+      ${sessionDetails.ipAddress ? `<li>IP Address: ${sessionDetails.ipAddress}</li>` : ''}
+      <li>Revoked at: ${sessionDetails.revokedAt}</li>
+    </ul>
+    <div class="alert-box">
+      <strong>If you didn't revoke this session:</strong><br>
+      Someone may have accessed your account. Please change your password immediately and review your active sessions.
+    </div>
+    <p>If you revoked this session yourself, you can safely ignore this email.</p>
+  `;
+
+  const text = `
+    Session Revoked
+    
+    Hi ${name},
+    
+    A session for your Expense Tracker account has been revoked.
+    
+    Session Details:
+    ${sessionDetails.deviceInfo ? `- Device: ${sessionDetails.deviceInfo}` : ''}
+    ${sessionDetails.ipAddress ? `- IP Address: ${sessionDetails.ipAddress}` : ''}
+    - Revoked at: ${sessionDetails.revokedAt}
+    
+    If you didn't revoke this session, please change your password immediately.
+  `;
+
+  return {
+    html: getBaseEmailTemplate('Session Revoked', content),
+    text,
+  };
+};
+

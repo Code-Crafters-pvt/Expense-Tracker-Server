@@ -201,3 +201,124 @@ export const sendTwoFactorCode = async (
   });
 };
 
+/**
+ * Send account reactivation email
+ */
+export const sendAccountReactivationEmail = async (
+  email: string,
+  name: string
+): Promise<string> => {
+  if (!isMailerooConfigured()) {
+    console.log('\n✅ ============= ACCOUNT REACTIVATION =============');
+    console.log(`To: ${email}`);
+    console.log(`Name: ${name}`);
+    console.log('==================================================\n');
+    return 'console-logged';
+  }
+
+  const { html, text } = templates.accountReactivationTemplate(name);
+
+  return await sendEmail({
+    to: email,
+    toName: name,
+    subject: 'Account Reactivated Successfully',
+    html,
+    text,
+  });
+};
+
+/**
+ * Send account deactivation email
+ */
+export const sendAccountDeactivationEmail = async (
+  email: string,
+  name: string
+): Promise<string> => {
+  if (!isMailerooConfigured()) {
+    console.log('\n⏸️ ============= ACCOUNT DEACTIVATION =============');
+    console.log(`To: ${email}`);
+    console.log(`Name: ${name}`);
+    console.log('==================================================\n');
+    return 'console-logged';
+  }
+
+  const { html, text } = templates.accountDeactivationTemplate(name);
+
+  return await sendEmail({
+    to: email,
+    toName: name,
+    subject: 'Account Deactivated',
+    html,
+    text,
+  });
+};
+
+/**
+ * Send suspicious login alert
+ */
+export const sendSuspiciousLoginAlert = async (
+  email: string,
+  name: string,
+  loginDetails: {
+    ipAddress?: string;
+    deviceInfo?: string;
+    location?: string;
+    timestamp: string;
+  }
+): Promise<string> => {
+  if (!isMailerooConfigured()) {
+    console.log('\n⚠️ ============= SUSPICIOUS LOGIN =============');
+    console.log(`To: ${email}`);
+    console.log(`Name: ${name}`);
+    console.log(`IP: ${loginDetails.ipAddress || 'Unknown'}`);
+    console.log(`Device: ${loginDetails.deviceInfo || 'Unknown'}`);
+    console.log(`Time: ${loginDetails.timestamp}`);
+    console.log('================================================\n');
+    return 'console-logged';
+  }
+
+  const { html, text } = templates.suspiciousLoginTemplate(name, loginDetails);
+
+  return await sendEmail({
+    to: email,
+    toName: name,
+    subject: 'New Login Detected - Security Alert',
+    html,
+    text,
+  });
+};
+
+/**
+ * Send session revoked notification
+ */
+export const sendSessionRevokedNotification = async (
+  email: string,
+  name: string,
+  sessionDetails: {
+    deviceInfo?: string;
+    ipAddress?: string;
+    revokedAt: string;
+  }
+): Promise<string> => {
+  if (!isMailerooConfigured()) {
+    console.log('\n🔒 ============= SESSION REVOKED =============');
+    console.log(`To: ${email}`);
+    console.log(`Name: ${name}`);
+    console.log(`Device: ${sessionDetails.deviceInfo || 'Unknown'}`);
+    console.log(`IP: ${sessionDetails.ipAddress || 'Unknown'}`);
+    console.log(`Revoked at: ${sessionDetails.revokedAt}`);
+    console.log('==============================================\n');
+    return 'console-logged';
+  }
+
+  const { html, text } = templates.sessionRevokedTemplate(name, sessionDetails);
+
+  return await sendEmail({
+    to: email,
+    toName: name,
+    subject: 'Session Revoked',
+    html,
+    text,
+  });
+};
+

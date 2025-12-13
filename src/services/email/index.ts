@@ -6,6 +6,10 @@ export {
   sendEmailChangedNotification,
   sendAccountDeletionEmail,
   sendTwoFactorCode,
+  sendAccountReactivationEmail,
+  sendAccountDeactivationEmail,
+  sendSuspiciousLoginAlert,
+  sendSessionRevokedNotification,
 } from './modules/auth/auth.emails';
 
 // Re-export expense emails (when implemented)
