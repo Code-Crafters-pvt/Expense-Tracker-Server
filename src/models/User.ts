@@ -16,6 +16,9 @@ export interface IUser extends Document {
   isEmailVerified: boolean;
   emailVerificationToken?: string;
   emailVerificationExpires?: Date;
+  pendingEmail?: string;
+  emailChangeToken?: string;
+  emailChangeExpires?: Date;
   deactivatedAt?: Date;
   scheduledDeletionDate?: Date;
   tokenVersion: number;
@@ -53,7 +56,7 @@ const userSchema = new Schema<IUser>(
       lowercase: true,
       trim: true,
       match: [
-        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
         'Please enter a valid email',
       ],
     },
@@ -85,6 +88,19 @@ const userSchema = new Schema<IUser>(
       select: false, // Don't include in queries by default
     },
     emailVerificationExpires: {
+      type: Date,
+    },
+    pendingEmail: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      select: false,
+    },
+    emailChangeToken: {
+      type: String,
+      select: false, // Don't include in queries by default
+    },
+    emailChangeExpires: {
       type: Date,
     },
     deactivatedAt: {

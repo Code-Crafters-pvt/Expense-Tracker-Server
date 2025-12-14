@@ -87,7 +87,8 @@ const validateRegistration = [
     .withMessage('Name must be between 2 and 50 characters'),
   body('email')
     .isEmail()
-    .normalizeEmail()
+    .trim()
+    .toLowerCase()
     .withMessage('Please enter a valid email'),
   body('password')
     .custom((value) => {
@@ -113,7 +114,8 @@ const validateRegistration = [
 const validateLogin = [
   body('email')
     .isEmail()
-    .normalizeEmail()
+    .trim()
+    .toLowerCase()
     .withMessage('Please enter a valid email'),
   body('password').notEmpty().withMessage('Password is required'),
 ];
@@ -822,7 +824,8 @@ router.post(
   [
     body('email')
       .isEmail()
-      .normalizeEmail()
+      .trim()
+      .toLowerCase()
       .withMessage('Please enter a valid email'),
   ],
   async (req, res) => {
@@ -1082,7 +1085,8 @@ router.post(
   [
     body('email')
       .isEmail()
-      .normalizeEmail()
+      .trim()
+      .toLowerCase()
       .withMessage('Please enter a valid email'),
   ],
   async (req, res) => {

@@ -4,6 +4,7 @@ export {
   sendPasswordResetEmail,
   sendPasswordChangedNotification,
   sendEmailChangedNotification,
+  sendEmailChangeVerification,
   sendAccountDeletionEmail,
   sendTwoFactorCode,
   sendAccountReactivationEmail,

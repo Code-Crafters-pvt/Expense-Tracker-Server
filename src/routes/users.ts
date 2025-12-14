@@ -7,6 +7,7 @@ import { passwordChangeLimiter, accountReactivateLimiter, accountReactivateFailu
 import {
   sendPasswordChangedNotification,
   sendEmailChangedNotification,
+  sendEmailChangeVerification,
   sendAccountDeletionEmail,
   sendAccountReactivationEmail,
   sendAccountDeactivationEmail,
@@ -14,12 +15,17 @@ import {
 } from '../services/email';
 import { RefreshToken } from '../models/RefreshToken';
 import { AccountStatus } from '../enums/AccountStatus';
+import crypto from 'crypto';
 
 const router = express.Router();
 
 // POST /api/users/account/reactivate - Reactivate account (public endpoint)
 router.post('/account/reactivate', accountReactivateFailureLimiter, accountReactivateLimiter, [
-  body('email').isEmail().normalizeEmail().withMessage('Please enter a valid email'),
+  body('email')
+    .isEmail({ allow_display_name: false, require_tld: true })
+    .withMessage('Please enter a valid email')
+    .trim()
+    .toLowerCase(),
   body('password').notEmpty().withMessage('Password is required'),
 ], async (req, res) => {
   try {
@@ -149,9 +155,10 @@ const validateUpdateProfile = [
     .withMessage('Name must be between 2 and 50 characters'),
   body('email')
     .optional()
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Please enter a valid email'),
+    .isEmail({ allow_display_name: false, require_tld: true })
+    .withMessage('Please enter a valid email')
+    .trim()
+    .toLowerCase(),
 ];
 
 router.use(authenticate);
@@ -286,8 +293,8 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
       });
     }
 
-    const { firstName, lastName, name, email } = req.body;
-    const user = await User.findById(req.user._id);
+    const { firstName, lastName, name, email } = req.body; // email is now lowercased but dots preserved
+    const user = await User.findById(req.user._id).select('+emailChangeToken');
     
     if (!user) {
       return res.status(404).json({
@@ -297,8 +304,10 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     }
 
     const oldEmail = user.email;
-    const updateData: any = {};
+    let emailChangeInitiated = false;
+    let emailChangeToken: string | undefined;
 
+    // Update firstName, lastName, name immediately
     if (firstName !== undefined) {
       user.firstName = firstName;
     }
@@ -308,40 +317,92 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     }
 
     if (name !== undefined) {
-      updateData.name = name;
+      user.name = name;
     }
 
+    // Handle email change - requires verification
     if (email && email !== oldEmail) {
+      // Check if email is already in use by another user (use normalized email for duplicate check)
       const existingUser = await User.findOne({ email });
-      if (existingUser) {
+      if (existingUser && existingUser._id.toString() !== user._id.toString()) {
         return res.status(400).json({
           success: false,
           error: 'Email is already in use',
         });
       }
-      updateData.email = email;
+
+      // Check if there's already a pending email change (use normalized email for comparison)
+      if (user.pendingEmail && user.pendingEmail === email.toLowerCase()) {
+        return res.status(400).json({
+          success: false,
+          error: 'A verification email has already been sent to this address. Please check your inbox or wait for the current verification to expire.',
+        });
+      }
+
+      // Generate email change verification token
+      emailChangeToken = crypto.randomBytes(32).toString('hex');
+      const hashedToken = crypto
+        .createHash('sha256')
+        .update(emailChangeToken)
+        .digest('hex');
+
+      // Store pending email and token (use normalized email for storage to prevent duplicates)
+      user.pendingEmail = email.toLowerCase();
+      user.emailChangeToken = hashedToken;
+      user.emailChangeExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      
+      emailChangeInitiated = true;
     }
 
-    const changeTimestamp = new Date();
-
-    if (Object.keys(updateData).length > 0) {
-      Object.assign(user, updateData);
-    }
-
+    // Save user first (like registration flow)
     await user.save();
 
-    if (email && oldEmail && email !== oldEmail) {
-      try {
-        const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
-        await sendEmailChangedNotification(
-          oldEmail,
-          email,
-          displayName,
-          changeTimestamp
-        );
-      } catch (emailError) {
-        console.error('Failed to send email change notification:', emailError);
+    // Send verification email to the new email address (after saving)
+    // Use same pattern as registration - use stored email from user object
+    if (emailChangeInitiated && user.pendingEmail) {
+      const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email-change?token=${emailChangeToken}`;
+      let emailSent = false;
+
+      if (user.pendingEmail) {
+        try {
+          const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
+          await sendEmailChangeVerification(
+            user.pendingEmail,
+            displayName,
+            verificationUrl
+          );
+          emailSent = true;
+        } catch (emailError) {
+          console.error('Failed to send email change verification:', emailError);
+        }
+      } else {
+        console.error('Pending email is missing, cannot send verification email.');
       }
+    }
+
+    // Return appropriate response
+    if (emailChangeInitiated) {
+      return res.json({
+        success: true,
+        message: 'Profile updated successfully. A verification email has been sent to your new email address. Please verify it to complete the email change.',
+        data: {
+          user: {
+            id: user._id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            name: user.name,
+            email: user.email, // Still shows old email until verified
+            pendingEmail: user.pendingEmail,
+            role: user.role,
+            isActive: user.isActive,
+            isEmailVerified: user.isEmailVerified,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+          },
+          requiresEmailVerification: true,
+        },
+      });
     }
 
     return res.json({
@@ -371,6 +432,151 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     });
   }
 });
+
+// POST /api/users/verify-email-change - Verify email change
+router.post(
+  '/verify-email-change',
+  authenticate,
+  [
+    body('token')
+      .notEmpty()
+      .withMessage('Verification token is required'),
+  ],
+  async (req: AuthRequest, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          error: 'User not authenticated',
+        });
+      }
+
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array(),
+        });
+      }
+
+      const { token } = req.body;
+
+      // Hash the provided token to match stored hash
+      const hashedToken = crypto
+        .createHash('sha256')
+        .update(token)
+        .digest('hex');
+
+      // Find user with matching token and non-expired date
+      const user = await User.findById(req.user._id)
+        .select('+emailChangeToken +pendingEmail');
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found',
+        });
+      }
+
+      // Verify token matches and hasn't expired
+      if (
+        !user.emailChangeToken ||
+        user.emailChangeToken !== hashedToken ||
+        !user.emailChangeExpires ||
+        user.emailChangeExpires < new Date()
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid or expired verification token',
+        });
+      }
+
+      if (!user.pendingEmail) {
+        return res.status(400).json({
+          success: false,
+          error: 'No pending email change found',
+        });
+      }
+
+      // Check if the pending email is already in use by another account
+      const existingUser = await User.findOne({ 
+        email: user.pendingEmail,
+        _id: { $ne: user._id }
+      });
+
+      if (existingUser) {
+        // Clear the pending email change
+        user.pendingEmail = undefined;
+        user.emailChangeToken = undefined;
+        user.emailChangeExpires = undefined;
+        await user.save();
+
+        return res.status(400).json({
+          success: false,
+          error: 'This email address is already in use by another account. Please choose a different email.',
+        });
+      }
+
+      const oldEmail = user.email;
+      const newEmail = user.pendingEmail;
+      const changeTimestamp = new Date();
+
+      // Update email from pendingEmail to email
+      user.email = newEmail;
+      user.pendingEmail = undefined;
+      user.emailChangeToken = undefined;
+      user.emailChangeExpires = undefined;
+
+      // If account was pending verification, activate it now
+      if (user.accountStatus === AccountStatus.PENDING_VERIFICATION) {
+        user.accountStatus = AccountStatus.ACTIVE;
+      }
+
+      await user.save();
+
+      // Send notification to both old and new email
+      try {
+        const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
+        await sendEmailChangedNotification(
+          oldEmail,
+          newEmail,
+          displayName,
+          changeTimestamp
+        );
+      } catch (emailError) {
+        console.error('Failed to send email change notification:', emailError);
+        // Don't fail the verification if email fails
+      }
+
+      return res.json({
+        success: true,
+        message: 'Email address verified and updated successfully',
+        data: {
+          user: {
+            id: user._id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            isActive: user.isActive,
+            isEmailVerified: user.isEmailVerified,
+            lastLoginAt: user.lastLoginAt,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error('Verify email change error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Server error during email change verification',
+      });
+    }
+  }
+);
 
 // GET /api/users/sessions - View active sessions
 router.get('/sessions', async (req: AuthRequest, res) => {

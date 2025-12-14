@@ -354,4 +354,37 @@ export const sessionRevokedTemplate = (
   };
 };
 
+export const emailChangeVerificationTemplate = (name: string, newEmail: string, verificationLink: string) => {
+  const content = `
+    <p>Hi ${name},</p>
+    <p>You requested to change your email address to: <strong>${newEmail}</strong></p>
+    <p>To complete this change, please verify your new email address by clicking the button below:</p>
+    <p style="color: #6b7280; font-size: 14px;">This link will expire in 24 hours.</p>
+    <div class="alert-box">
+      <strong>⚠️ If you didn't request this change:</strong><br>
+      Please ignore this email and contact our support team immediately if you believe your account may be compromised.
+    </div>
+  `;
+
+  const text = `
+    Email Change Verification
+    
+    Hi ${name},
+    
+    You requested to change your email address to: ${newEmail}
+    
+    To complete this change, please verify your new email address by clicking this link:
+    ${verificationLink}
+    
+    This link will expire in 24 hours.
+    
+    ⚠️ If you didn't request this change, please ignore this email and contact support immediately.
+  `;
+
+  return {
+    html: getBaseEmailTemplate('Verify Your New Email Address', content, 'Verify Email Change', verificationLink),
+    text,
+  };
+};
+
 

@@ -218,4 +218,24 @@ export const sendSessionRevokedNotification = async (
   });
 };
 
+/**
+ * Send email change verification email
+ * Same pattern as sendVerificationEmail
+ */
+export const sendEmailChangeVerification = async (
+  newEmail: string,
+  name: string,
+  verificationLink: string
+): Promise<string> => {
+  const { html, text } = templates.emailChangeVerificationTemplate(name, newEmail, verificationLink);
+
+  return await sendEmail({
+    to: newEmail,
+    toName: name,
+    subject: 'Verify Your New Email Address',
+    html,
+    text,
+  });
+};
+
 
