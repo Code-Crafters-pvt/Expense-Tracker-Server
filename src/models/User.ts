@@ -1,17 +1,26 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { UserRole } from '../enums/UserRole';
+import { AccountStatus } from '../enums/AccountStatus';
 
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId;
   firstName: string;
   lastName: string;
-  name?: string; // Computed field for backward compatibility
+  name?: string;
   email: string;
   password: string;
   role: UserRole;
   isActive: boolean;
+  accountStatus: AccountStatus;
   isEmailVerified: boolean;
+  emailVerificationToken?: string;
+  emailVerificationExpires?: Date;
+  pendingEmail?: string;
+  emailChangeToken?: string;
+  emailChangeExpires?: Date;
+  deactivatedAt?: Date;
+  scheduledDeletionDate?: Date;
   tokenVersion: number;
   lastLoginAt?: Date;
   
@@ -36,7 +45,7 @@ const userSchema = new Schema<IUser>(
     },
     name: {
       type: String,
-      required: false, // Computed field
+      required: false,
       trim: true,
       maxlength: [50, 'Name cannot be more than 50 characters'],
     },
@@ -47,7 +56,7 @@ const userSchema = new Schema<IUser>(
       lowercase: true,
       trim: true,
       match: [
-        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
         'Please enter a valid email',
       ],
     },
@@ -67,9 +76,38 @@ const userSchema = new Schema<IUser>(
       default: true,
       index: true,
     },
-    isEmailVerified: {
-      type: Boolean,
-      default: true, // Defaults to true for existing users, will be false for new registrations with email verification
+    accountStatus: {
+      type: String,
+      enum: Object.values(AccountStatus),
+      default: AccountStatus.PENDING_VERIFICATION,
+      required: true,
+      index: true,
+    },
+    emailVerificationToken: {
+      type: String,
+      select: false, // Don't include in queries by default
+    },
+    emailVerificationExpires: {
+      type: Date,
+    },
+    pendingEmail: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      select: false,
+    },
+    emailChangeToken: {
+      type: String,
+      select: false, // Don't include in queries by default
+    },
+    emailChangeExpires: {
+      type: Date,
+    },
+    deactivatedAt: {
+      type: Date,
+    },
+    scheduledDeletionDate: {
+      type: Date,
     },
     tokenVersion: {
       type: Number,
@@ -82,6 +120,7 @@ const userSchema = new Schema<IUser>(
   {
     timestamps: true,
     toJSON: {
+      virtuals: true, // Include virtual fields in JSON output
       transform: function (
         doc,
         ret: { password?: string } & Record<string, any>
@@ -92,6 +131,14 @@ const userSchema = new Schema<IUser>(
     },
   }
 );
+
+// Virtual field: isEmailVerified is computed from accountStatus
+// This ensures consistency and eliminates the need to store a redundant field
+// Since isEmailVerified is always derived from accountStatus, making it a virtual
+// field prevents data inconsistency and removes the need for pre-save hook logic
+userSchema.virtual('isEmailVerified').get(function (this: IUser) {
+  return this.accountStatus === AccountStatus.ACTIVE;
+});
 
 userSchema.pre('save', async function (next) {
   this.name = [this.firstName, this.lastName].filter(Boolean).join(' ').trim();
