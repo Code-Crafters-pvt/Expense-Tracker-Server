@@ -8,7 +8,6 @@ export {
   sendTwoFactorCode,
   sendAccountReactivationEmail,
   sendAccountDeactivationEmail,
-  sendSuspiciousLoginAlert,
   sendSessionRevokedNotification,
 } from './modules/auth/auth.emails';
 

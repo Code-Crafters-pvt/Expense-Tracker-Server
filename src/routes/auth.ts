@@ -14,12 +14,11 @@ import {
   sendPasswordResetEmail,
   sendVerificationEmail,
   sendWelcomeEmail,
-  sendSuspiciousLoginAlert,
 } from '../services/email';
 import { AccountStatus } from '../enums/AccountStatus';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
-import { getClientIpAddress, getDeviceInfo, parseFullName } from '../utils/requestHelpers';
+import { getClientIpAddress, getDeviceInfo, parseFullName, getValidUserName, extractNameFromEmail } from '../utils/requestHelpers';
 import crypto from 'crypto';
 
 
@@ -133,28 +132,24 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Check if user exists
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
       if (existingUser.accountStatus === AccountStatus.PENDING_VERIFICATION) {
-        // Update password if provided (user may have forgotten it)
-        if (password) {
-          existingUser.password = password;
-        }
-
-        // Update name fields if provided
-        if (firstName) {
+        let nameUpdated = false;
+        if (firstName && firstName.trim() !== existingUser.firstName) {
           existingUser.firstName = firstName.trim();
+          nameUpdated = true;
         }
-        if (lastName) {
+        if (lastName && lastName.trim() !== existingUser.lastName) {
           existingUser.lastName = lastName.trim();
+          nameUpdated = true;
         }
-        if (name) {
+        if (name && name.trim() !== existingUser.name) {
           existingUser.name = name.trim();
+          nameUpdated = true;
         }
 
-        // Generate new verification token
         const verificationToken = crypto.randomBytes(32).toString('hex');
         const hashedToken = crypto
           .createHash('sha256')
@@ -163,9 +158,19 @@ router.post('/register', validateRegistration, async (req, res) => {
 
         existingUser.emailVerificationToken = hashedToken;
         existingUser.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-        await existingUser.save();
+        
+        if (nameUpdated) {
+          await existingUser.save();
+        } else {
+          await User.updateOne(
+            { _id: existingUser._id },
+            {
+              emailVerificationToken: hashedToken,
+              emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000)
+            }
+          );
+        }
 
-        // Try to send email
         const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
         const displayName = existingUser.name || 
           (existingUser.firstName && existingUser.lastName 
@@ -188,13 +193,11 @@ router.post('/register', validateRegistration, async (req, res) => {
 
           return res.status(200).json({
             success: true,
-            message: password 
-              ? 'Account updated and verification email resent. Please check your inbox.'
-              : 'A verification email has been resent. Please check your inbox.',
+            message: 'A verification email has been resent. Please check your inbox to verify your account.',
             data: {
               email: existingUser.email,
               requiresVerification: true,
-              passwordUpdated: !!password,
+              note: 'If you forgot your password, please verify your email first, then use the "Forgot Password" option.',
             },
           });
         } catch (emailError) {
@@ -202,20 +205,16 @@ router.post('/register', validateRegistration, async (req, res) => {
 
           return res.status(200).json({
             success: true,
-            message: password
-              ? 'Account updated but verification email could not be sent. Please use "Resend Verification" option.'
-              : 'Account exists but verification email could not be sent. Please use "Resend Verification" option.',
+            message: 'Account exists but verification email could not be sent. Please try again or contact support.',
             data: {
               email: existingUser.email,
               requiresVerification: true,
               emailFailed: true,
-              passwordUpdated: !!password,
             },
           });
         }
       }
 
-      // User exists and is not PENDING_VERIFICATION
       if (existingUser.accountStatus === AccountStatus.DELETED) {
         return res.status(400).json({
           success: false,
@@ -236,29 +235,32 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Create new user
     let finalFirstName: string;
     let finalLastName: string;
     
     if (firstName && lastName) {
       finalFirstName = firstName.trim();
       finalLastName = lastName.trim();
-    } else if (name) {
-      const parsed = parseFullName(name);
+    } else {
+      const parsed = parseFullName(name!);
       finalFirstName = parsed.firstName;
       finalLastName = parsed.lastName;
-    } else {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: [
-          { field: 'firstName', message: 'First name is required' },
-          { field: 'lastName', message: 'Last name is required' },
-        ],
-      });
+      
+      if (!finalFirstName || !finalLastName) {
+        const emailBased = extractNameFromEmail(email);
+        finalFirstName = finalFirstName || emailBased.firstName;
+        finalLastName = finalLastName || emailBased.lastName;
+        
+        if (!finalFirstName) {
+          const emailPrefix = email.split('@')[0] || 'User';
+          finalFirstName = emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1).toLowerCase();
+        }
+        if (!finalLastName) {
+          finalLastName = finalFirstName; // Use firstName as lastName
+        }
+      }
     }
 
-    // Generate email verification token
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const hashedVerificationToken = crypto
       .createHash('sha256')
@@ -278,7 +280,6 @@ router.post('/register', validateRegistration, async (req, res) => {
 
     await user.save();
 
-    // Try to send verification email
     const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
     let emailSent = false;
 
@@ -289,7 +290,6 @@ router.post('/register', validateRegistration, async (req, res) => {
         emailSent = true;
       } catch (emailError) {
         console.error('Failed to send verification email:', emailError);
-        // Don't fail registration - user can request resend
       }
     } else {
       console.error('User email is missing, cannot send verification email.');
@@ -310,7 +310,6 @@ router.post('/register', validateRegistration, async (req, res) => {
   } catch (error: any) {
     console.error('Registration error:', error);
 
-    // Handle Mongoose validation errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map((err: any) => err.message);
       return res.status(400).json({
@@ -320,7 +319,6 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Handle duplicate key error (email already exists)
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -328,7 +326,6 @@ router.post('/register', validateRegistration, async (req, res) => {
       });
     }
 
-    // Other server errors
     res.status(500).json({
       success: false,
       error: 'Registration failed',
@@ -339,7 +336,6 @@ router.post('/register', validateRegistration, async (req, res) => {
 // Login user
 router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (req, res) => {
   try {
-    // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -351,7 +347,6 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
 
     const { email, password } = req.body;
 
-    // Find user and include password for comparison
     const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({
@@ -360,7 +355,6 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       });
     }
 
-    // Check account status
     if (user.accountStatus === AccountStatus.PENDING_VERIFICATION) {
       return res.status(403).json({
         success: false,
@@ -395,7 +389,6 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       });
     }
 
-    // Check password
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -430,47 +423,9 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       tokenVersion: user.tokenVersion,
     });
 
-    // Get device info and IP before creating session
     const deviceInfo = getDeviceInfo(req);
     const ipAddress = getClientIpAddress(req);
     
-    // Check for suspicious login (new device/IP) before creating session
-    try {
-      // Check if this is a new device/IP by looking at existing active sessions
-      const existingSessions = await RefreshToken.find({
-        userId: user._id,
-        isRevoked: false,
-      }).limit(5); // Check last 5 sessions
-
-      // If user has existing sessions, check if this is a new device/IP
-      const isNewDevice = existingSessions.length === 0 || 
-        !existingSessions.some(session => 
-          session.deviceInfo === deviceInfo && session.ipAddress === ipAddress
-        );
-
-      if (isNewDevice && existingSessions.length > 0) {
-        // Only send alert if user has previous sessions (not first login)
-        // Send suspicious login alert (async, don't wait)
-        if (user.email) {
-          sendSuspiciousLoginAlert(
-            user.email,
-            user.name || `${user.firstName} ${user.lastName}`,
-            {
-              ipAddress,
-              deviceInfo,
-              timestamp: new Date().toLocaleString(),
-            }
-          ).catch((emailError) => {
-            console.error('Failed to send suspicious login alert:', emailError);
-          });
-        }
-      }
-    } catch (alertError) {
-      console.error('Error checking suspicious login:', alertError);
-      // Don't fail login if alert check fails
-    }
-
-    // Store refresh token in database
     await RefreshToken.createRefreshToken(
       user._id,
       refreshToken,
@@ -511,7 +466,6 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Verify JWT signature first
     let payload;
     try {
       payload = verifyRefreshToken(incomingRefreshToken);
@@ -522,7 +476,6 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Hash token and check if it exists in database
     const hashedToken = RefreshToken.hashToken(incomingRefreshToken);
     const storedToken = await RefreshToken.findOne({
       token: hashedToken,
@@ -536,7 +489,6 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Find user
     const user = await User.findById(payload.userId);
     if (!user) {
       return res.status(401).json({
@@ -545,7 +497,6 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Check if account is active
     if (!user.isActive) {
       return res.status(403).json({
         success: false,
@@ -553,9 +504,7 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Check token version (required and must match)
     if (!isTokenVersionValid(payload, user)) {
-      // Token version mismatch - invalidate this token
       await RefreshToken.findByIdAndUpdate(storedToken._id, { isRevoked: true });
       return res.status(401).json({
         success: false,
@@ -563,7 +512,6 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Revoke old refresh token (token rotation)
     await RefreshToken.findByIdAndUpdate(storedToken._id, { isRevoked: true });
 
     // Validate email exists before generating tokens
@@ -575,7 +523,6 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Issue new tokens
     const newAccessToken = generateAccessToken({
       userId: user._id.toString(),
       email: user.email,
@@ -587,7 +534,6 @@ router.post('/refresh', async (req, res) => {
       tokenVersion: user.tokenVersion,
     });
 
-    // Store new refresh token in database
     const deviceInfo = getDeviceInfo(req);
     const ipAddress = getClientIpAddress(req);
     
@@ -660,7 +606,6 @@ router.post('/logout-all', authenticate, async (req: AuthRequest, res) => {
     user.tokenVersion += 1;
     await user.save();
     
-    // Revoke all refresh tokens for this user
     await RefreshToken.updateMany(
       { userId: user._id, isRevoked: false },
       { isRevoked: true }
@@ -679,7 +624,6 @@ router.post('/logout-all', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-// Get current user
 router.get('/me', authenticate, async (req: AuthRequest, res) => {
   try {
     if (!req.user) {
@@ -711,7 +655,6 @@ router.post('/oauth', async (req, res) => {
 
     let userData: { name: string; email: string } | null = null;
 
-    // Verify token and get user info based on provider
     switch (provider) {
       case 'google':
         try {
@@ -746,8 +689,6 @@ router.post('/oauth', async (req, res) => {
         break;
 
       case 'apple':
-        // For Apple Sign In, we trust the token verification done on the client side
-        // since Apple's JWT contains the user info and is already verified
         userData = {
           name: name || '',
           email: email || '',
@@ -768,25 +709,21 @@ router.post('/oauth', async (req, res) => {
       });
     }
 
-    // Find or create user
     let user = await User.findOne({ email: userData.email });
 
     if (!user) {
-      // Parse name into firstName and lastName
-      const { firstName, lastName } = parseFullName(userData.name);
+      const { firstName, lastName, fullName } = getValidUserName(userData.name, userData.email);
 
       user = new User({
         firstName,
         lastName,
-        name: userData.name,
+        name: userData.name || fullName,
         email: userData.email,
-        // Generate secure random placeholder password for OAuth users
         password: crypto
           .randomBytes(6)
           .toString('base64')
           .replace(/[^a-zA-Z0-9]/g, '')
           .slice(0, 8),
-        // OAuth providers already verify emails, so mark as active
         accountStatus: AccountStatus.ACTIVE,
       });
       await user.save();
@@ -843,7 +780,6 @@ router.post('/oauth', async (req, res) => {
       tokenVersion: user.tokenVersion,
     });
 
-    // Store refresh token in database
     const deviceInfo = getDeviceInfo(req);
     const ipAddress = getClientIpAddress(req);
     

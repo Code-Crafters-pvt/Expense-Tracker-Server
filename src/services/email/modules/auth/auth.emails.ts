@@ -62,9 +62,10 @@ export const sendPasswordResetEmail = async (
  */
 export const sendPasswordChangedNotification = async (
   email: string,
-  name: string
+  name: string,
+  changedAt: Date = new Date()
 ): Promise<string> => {
-  const { html, text } = templates.passwordChangedTemplate(email, name);
+  const { html, text } = templates.passwordChangedTemplate(email, name, changedAt);
 
   return await sendEmail({
     to: email,
@@ -82,9 +83,10 @@ export const sendPasswordChangedNotification = async (
 export const sendEmailChangedNotification = async (
   oldEmail: string,
   newEmail: string,
-  name: string
+  name: string,
+  changedAt: Date = new Date()
 ): Promise<{ oldEmail: string | null; newEmail: string | null }> => {
-  const { html, text } = templates.emailChangedTemplate(newEmail, name);
+  const { html, text } = templates.emailChangedTemplate(newEmail, name, changedAt);
 
   // Send to both emails - handle errors individually so one failure doesn't prevent the other
   const emailPromises = [
@@ -194,30 +196,6 @@ export const sendAccountDeactivationEmail = async (
 };
 
 /**
- * Send suspicious login alert
- */
-export const sendSuspiciousLoginAlert = async (
-  email: string,
-  name: string,
-  loginDetails: {
-    ipAddress?: string;
-    deviceInfo?: string;
-    location?: string;
-    timestamp: string;
-  }
-): Promise<string> => {
-  const { html, text } = templates.suspiciousLoginTemplate(name, loginDetails);
-
-  return await sendEmail({
-    to: email,
-    toName: name,
-    subject: 'New Login Detected - Security Alert',
-    html,
-    text,
-  });
-};
-
-/**
  * Send session revoked notification
  */
 export const sendSessionRevokedNotification = async (
@@ -226,7 +204,7 @@ export const sendSessionRevokedNotification = async (
   sessionDetails: {
     deviceInfo?: string;
     ipAddress?: string;
-    revokedAt: string;
+    revokedAt: Date;
   }
 ): Promise<string> => {
   const { html, text } = templates.sessionRevokedTemplate(name, sessionDetails);
@@ -239,4 +217,5 @@ export const sendSessionRevokedNotification = async (
     text,
   });
 };
+
 

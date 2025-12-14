@@ -80,10 +80,6 @@ const userSchema = new Schema<IUser>(
       required: true,
       index: true,
     },
-    isEmailVerified: {
-      type: Boolean,
-      default: false,
-    },
     emailVerificationToken: {
       type: String,
       select: false, // Don't include in queries by default
@@ -108,6 +104,7 @@ const userSchema = new Schema<IUser>(
   {
     timestamps: true,
     toJSON: {
+      virtuals: true, // Include virtual fields in JSON output
       transform: function (
         doc,
         ret: { password?: string } & Record<string, any>
@@ -119,12 +116,16 @@ const userSchema = new Schema<IUser>(
   }
 );
 
+// Virtual field: isEmailVerified is computed from accountStatus
+// This ensures consistency and eliminates the need to store a redundant field
+// Since isEmailVerified is always derived from accountStatus, making it a virtual
+// field prevents data inconsistency and removes the need for pre-save hook logic
+userSchema.virtual('isEmailVerified').get(function (this: IUser) {
+  return this.accountStatus === AccountStatus.ACTIVE;
+});
+
 userSchema.pre('save', async function (next) {
   this.name = [this.firstName, this.lastName].filter(Boolean).join(' ').trim();
-
-  if (this.isModified('accountStatus') || this.isNew) {
-    this.isEmailVerified = this.accountStatus === AccountStatus.ACTIVE;
-  }
 
   if (this.password && this.isModified('password')) {
     try {

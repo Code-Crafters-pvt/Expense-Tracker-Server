@@ -101,7 +101,7 @@ export const passwordResetTemplate = (resetUrl: string) => {
   };
 };
 
-export const passwordChangedTemplate = (email: string, name: string) => {
+export const passwordChangedTemplate = (email: string, name: string, changedAt: Date = new Date()) => {
   const content = `
     <p>Hi ${name},</p>
     <p>This email confirms that your password was successfully changed.</p>
@@ -111,7 +111,7 @@ export const passwordChangedTemplate = (email: string, name: string) => {
     </div>
     <p><strong>Change Details:</strong></p>
     <ul>
-      <li>Time: ${formatEmailDate()}</li>
+      <li>Time: ${formatEmailDate(changedAt)}</li>
       <li>Account: ${email}</li>
     </ul>
     <p>For your security, you may need to log in again on other devices.</p>
@@ -127,7 +127,7 @@ export const passwordChangedTemplate = (email: string, name: string) => {
     ⚠️ If you didn't make this change, please contact support immediately.
     
     Change Details:
-    - Time: ${formatEmailDate()}
+    - Time: ${formatEmailDate(changedAt)}
     - Account: ${email}
     
     For your security, you may need to log in again on other devices.
@@ -139,7 +139,7 @@ export const passwordChangedTemplate = (email: string, name: string) => {
   };
 };
 
-export const emailChangedTemplate = (newEmail: string, name: string) => {
+export const emailChangedTemplate = (newEmail: string, name: string, changedAt: Date = new Date()) => {
   const content = `
     <p>Hi ${name},</p>
     <p>Your email address has been successfully changed to: <strong>${newEmail}</strong></p>
@@ -149,7 +149,7 @@ export const emailChangedTemplate = (newEmail: string, name: string) => {
     </div>
     <p><strong>Change Details:</strong></p>
     <ul>
-      <li>Time: ${formatEmailDate()}</li>
+      <li>Time: ${formatEmailDate(changedAt)}</li>
       <li>New Email: ${newEmail}</li>
     </ul>
   `;
@@ -164,7 +164,7 @@ export const emailChangedTemplate = (newEmail: string, name: string) => {
     ⚠️ If you didn't make this change, please contact support immediately.
     
     Change Details:
-    - Time: ${formatEmailDate()}
+    - Time: ${formatEmailDate(changedAt)}
     - New Email: ${newEmail}
   `;
 
@@ -309,63 +309,12 @@ export const accountDeactivationTemplate = (name: string) => {
   };
 };
 
-export const suspiciousLoginTemplate = (
-  name: string,
-  loginDetails: {
-    ipAddress?: string;
-    deviceInfo?: string;
-    location?: string;
-    timestamp: string;
-  }
-) => {
-  const content = `
-    <p>Hi ${name},</p>
-    <p>We detected a new login to your Expense Tracker account.</p>
-    <div class="alert-box">
-      <strong>⚠️ Security Alert:</strong><br>
-      If this wasn't you, please secure your account immediately by changing your password.
-    </div>
-    <p><strong>Login Details:</strong></p>
-    <ul>
-      <li>Time: ${loginDetails.timestamp}</li>
-      ${loginDetails.deviceInfo ? `<li>Device: ${loginDetails.deviceInfo}</li>` : ''}
-      ${loginDetails.ipAddress ? `<li>IP Address: ${loginDetails.ipAddress}</li>` : ''}
-      ${loginDetails.location ? `<li>Location: ${loginDetails.location}</li>` : ''}
-    </ul>
-    <p>If this was you, you can safely ignore this email.</p>
-    <p>If you don't recognize this activity, please change your password immediately and review your account security settings.</p>
-  `;
-
-  const text = `
-    Suspicious Login Alert
-    
-    Hi ${name},
-    
-    We detected a new login to your Expense Tracker account.
-    
-    ⚠️ If this wasn't you, please secure your account immediately.
-    
-    Login Details:
-    - Time: ${loginDetails.timestamp}
-    ${loginDetails.deviceInfo ? `- Device: ${loginDetails.deviceInfo}` : ''}
-    ${loginDetails.ipAddress ? `- IP Address: ${loginDetails.ipAddress}` : ''}
-    ${loginDetails.location ? `- Location: ${loginDetails.location}` : ''}
-    
-    If you don't recognize this activity, please change your password immediately.
-  `;
-
-  return {
-    html: getBaseEmailTemplate('New Login Detected', content),
-    text,
-  };
-};
-
 export const sessionRevokedTemplate = (
   name: string,
   sessionDetails: {
     deviceInfo?: string;
     ipAddress?: string;
-    revokedAt: string;
+    revokedAt: Date;
   }
 ) => {
   const content = `
@@ -375,7 +324,7 @@ export const sessionRevokedTemplate = (
     <ul>
       ${sessionDetails.deviceInfo ? `<li>Device: ${sessionDetails.deviceInfo}</li>` : ''}
       ${sessionDetails.ipAddress ? `<li>IP Address: ${sessionDetails.ipAddress}</li>` : ''}
-      <li>Revoked at: ${sessionDetails.revokedAt}</li>
+      <li>Revoked at: ${formatEmailDate(sessionDetails.revokedAt)}</li>
     </ul>
     <div class="alert-box">
       <strong>If you didn't revoke this session:</strong><br>
@@ -394,7 +343,7 @@ export const sessionRevokedTemplate = (
     Session Details:
     ${sessionDetails.deviceInfo ? `- Device: ${sessionDetails.deviceInfo}` : ''}
     ${sessionDetails.ipAddress ? `- IP Address: ${sessionDetails.ipAddress}` : ''}
-    - Revoked at: ${sessionDetails.revokedAt}
+    - Revoked at: ${formatEmailDate(sessionDetails.revokedAt)}
     
     If you didn't revoke this session, please change your password immediately.
   `;
@@ -404,4 +353,5 @@ export const sessionRevokedTemplate = (
     text,
   };
 };
+
 

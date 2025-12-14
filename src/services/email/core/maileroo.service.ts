@@ -1,4 +1,5 @@
 import axios from 'axios';
+import validator from 'validator';
 import { MAILEROO_CONFIG } from '../config/maileroo.config';
 
 interface EmailPayload {
@@ -22,9 +23,9 @@ export const sendEmail = async (payload: EmailPayload): Promise<string> => {
     throw new Error(errorMsg);
   }
 
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(payload.to)) {
+  // Validate email format using validator library for robust validation
+  // Supports plus signs, subdomains, international characters, and various TLD formats
+  if (!validator.isEmail(payload.to)) {
     const errorMsg = `Invalid email address format: ${payload.to}`;
     console.error('❌ Email Validation Error:', errorMsg);
     throw new Error(errorMsg);
@@ -79,4 +80,5 @@ export const sendEmail = async (payload: EmailPayload): Promise<string> => {
     throw new Error(`Failed to send email to ${payload.to}: ${errorMessage}`);
   }
 };
+
 

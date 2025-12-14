@@ -38,7 +38,6 @@ router.post('/account/reactivate', accountReactivateFailureLimiter, accountReact
     const user = await User.findOne({ email }).select('+password');
 
     // Security: Use generic error message to prevent user enumeration
-    // Don't reveal whether user exists, account status, or password validity
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -63,16 +62,12 @@ router.post('/account/reactivate', accountReactivateFailureLimiter, accountReact
       });
     }
 
-    // Reactivate account
     user.accountStatus = AccountStatus.ACTIVE;
     user.deactivatedAt = undefined;
     user.isActive = true;
     await user.save();
 
-    // Send reactivation email
-    if (!user.email) {
-      console.error('User email is missing, cannot send reactivation email');
-    } else {
+    if (user.email) {
       try {
         await sendAccountReactivationEmail(
           user.email,
@@ -80,8 +75,9 @@ router.post('/account/reactivate', accountReactivateFailureLimiter, accountReact
         );
       } catch (emailError) {
         console.error('Failed to send reactivation email:', emailError);
-        // Don't fail the request if email fails
       }
+    } else {
+      console.error('User email is missing, cannot send reactivation email');
     }
 
     res.json({
@@ -96,7 +92,6 @@ router.post('/account/reactivate', accountReactivateFailureLimiter, accountReact
     });
   }
 });
-
 
 router.get('/profile', authenticate, async (req: AuthRequest, res) => {
   try {
@@ -182,7 +177,6 @@ const validateChangePassword = [
     }),
 ];
 
-
 // POST /api/users/change-password - Change user password
 router.post(
   '/change-password',
@@ -197,7 +191,6 @@ router.post(
         });
       }
       
-      // Check for validation errors
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({
@@ -209,7 +202,6 @@ router.post(
 
       const { currentPassword, newPassword } = req.body;
 
-      // Get user with password (password is excluded by default)
       const user = await User.findById(req.user._id).select('+password');
       
       if (!user) {
@@ -219,7 +211,6 @@ router.post(
         });
       }
 
-      // Verify current password
       const isValidPassword = await user.comparePassword(currentPassword);
       
       if (!isValidPassword) {
@@ -229,7 +220,6 @@ router.post(
         });
       }
 
-      // Check if new password is same as old password
       const isSamePassword = await user.comparePassword(newPassword);
       if (isSamePassword) {
         return res.status(400).json({
@@ -238,23 +228,29 @@ router.post(
         });
       }
 
-      // Update password (will be hashed by pre-save hook)
+      const changeTimestamp = new Date();
+
       user.password = newPassword;
-      
-      // Increment token version to invalidate all access tokens
       user.tokenVersion += 1;
       await user.save();
 
-      // Invalidate all refresh tokens (logout from all devices)
       await RefreshToken.updateMany(
         { userId: user._id, isRevoked: false },
         { isRevoked: true }
       );
 
-      try {
-        await sendPasswordChangedNotification(user.email!, user.name ?? "");
-      } catch (emailError) {
-        console.error('Failed to send password changed notification:', emailError);
+      if (user.email) {
+        try {
+          await sendPasswordChangedNotification(
+            user.email,
+            user.name ?? "",
+            changeTimestamp
+          );
+        } catch (emailError) {
+          console.error('Failed to send password changed notification:', emailError);
+        }
+      } else {
+        console.error('User email is missing, cannot send password changed notification');
       }
 
       res.json({
@@ -271,7 +267,7 @@ router.post(
   }
 );
 
-// PUT /api/users/profile - Update user profile (firstName, lastName, name, email)
+// PUT /api/users/profile - Update user profile
 router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequest, res) => {
   try {
     if (!req.user) {
@@ -303,24 +299,19 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     const oldEmail = user.email;
     const updateData: any = {};
 
-    // Update firstName if provided
     if (firstName !== undefined) {
       user.firstName = firstName;
     }
 
-    // Update lastName if provided
     if (lastName !== undefined) {
       user.lastName = lastName;
     }
 
-    // Update name if provided (will be auto-generated from firstName+lastName in pre-save hook if not provided)
     if (name !== undefined) {
       updateData.name = name;
     }
 
-    // Update email if provided and different
     if (email && email !== oldEmail) {
-      // Check if email is already taken
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         return res.status(400).json({
@@ -331,27 +322,25 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
       updateData.email = email;
     }
 
-    // Apply updates
+    const changeTimestamp = new Date();
+
     if (Object.keys(updateData).length > 0) {
       Object.assign(user, updateData);
     }
 
     await user.save();
 
-    // Send email change notification if email was changed
-    // Note: oldEmail is checked for truthiness in the condition, ensuring type safety
     if (email && oldEmail && email !== oldEmail) {
       try {
         const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
-        // oldEmail is guaranteed to be defined here due to the condition above
         await sendEmailChangedNotification(
           oldEmail,
           email,
-          displayName
+          displayName,
+          changeTimestamp
         );
       } catch (emailError) {
         console.error('Failed to send email change notification:', emailError);
-        // Don't fail the request if email fails
       }
     }
 
@@ -395,7 +384,6 @@ router.get('/sessions', async (req: AuthRequest, res) => {
     
     const user = req.user;
     
-    // Get all active refresh tokens for this user
     const sessions = await RefreshToken.find({
       userId: user._id,
       isRevoked: false,
@@ -404,7 +392,6 @@ router.get('/sessions', async (req: AuthRequest, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // Format sessions for response
     const formattedSessions = sessions.map((session: any) => ({
       id: session._id,
       deviceInfo: session.deviceInfo,
@@ -443,7 +430,6 @@ router.delete('/sessions/:id', async (req: AuthRequest, res) => {
     const user = req.user;
     const sessionId = req.params.id;
 
-    // Find and revoke the specific session
     const session = await RefreshToken.findOne({
       _id: sessionId,
       userId: user._id,
@@ -457,23 +443,27 @@ router.delete('/sessions/:id', async (req: AuthRequest, res) => {
       });
     }
 
+    const revokedAt = new Date();
+
     session.isRevoked = true;
     await session.save();
 
-    // Send session revoked notification
-    try {
-      await sendSessionRevokedNotification(
-        user.email!,
-        user.name || `${user.firstName} ${user.lastName}`,
-        {
-          deviceInfo: session.deviceInfo,
-          ipAddress: session.ipAddress,
-          revokedAt: new Date().toLocaleString(),
-        }
-      );
-    } catch (emailError) {
-      console.error('Failed to send session revoked notification:', emailError);
-      // Don't fail the request if email fails
+    if (user.email) {
+      try {
+        await sendSessionRevokedNotification(
+          user.email,
+          user.name || `${user.firstName} ${user.lastName}`,
+          {
+            deviceInfo: session.deviceInfo,
+            ipAddress: session.ipAddress,
+            revokedAt,
+          }
+        );
+      } catch (emailError) {
+        console.error('Failed to send session revoked notification:', emailError);
+      }
+    } else {
+      console.error('User email is missing, cannot send session revoked notification');
     }
 
     res.json({
@@ -519,26 +509,25 @@ router.post('/account/deactivate', authenticate, async (req: AuthRequest, res) =
     user.accountStatus = AccountStatus.DEACTIVATED;
     user.deactivatedAt = new Date();
     user.isActive = false;
-    
-    // Increment token version to invalidate all tokens
     user.tokenVersion += 1;
     await user.save();
 
-    // Revoke all refresh tokens
     await RefreshToken.updateMany(
       { userId: user._id, isRevoked: false },
       { isRevoked: true }
     );
 
-    // Send deactivation email
-    try {
-      await sendAccountDeactivationEmail(
-        user.email!,
-        user.name || `${user.firstName} ${user.lastName}`
-      );
-    } catch (emailError) {
-      console.error('Failed to send deactivation email:', emailError);
-      // Don't fail the request if email fails
+    if (user.email) {
+      try {
+        await sendAccountDeactivationEmail(
+          user.email,
+          user.name || `${user.firstName} ${user.lastName}`
+        );
+      } catch (emailError) {
+        console.error('Failed to send deactivation email:', emailError);
+      }
+    } else {
+      console.error('User email is missing, cannot send deactivation email');
     }
 
     res.json({
@@ -576,7 +565,6 @@ router.post('/account/delete', authenticate, [
     }
 
     const { password } = req.body;
-
     const user = await User.findById(req.user._id).select('+password');
 
     if (!user) {
@@ -588,7 +576,6 @@ router.post('/account/delete', authenticate, [
 
     // Verify password
     const isPasswordValid = await user.comparePassword(password);
-
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
@@ -603,16 +590,12 @@ router.post('/account/delete', authenticate, [
       });
     }
 
-    // Store user info before deletion
     const userEmail = user.email;
     const userName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
 
-    // Schedule deletion for 30 days from now
     user.accountStatus = AccountStatus.DELETED;
-    user.scheduledDeletionDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    user.scheduledDeletionDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     user.isActive = false;
-    
-    // Increment token version to invalidate all tokens
     user.tokenVersion += 1;
     await user.save();
 
@@ -622,13 +605,11 @@ router.post('/account/delete', authenticate, [
       { isRevoked: true }
     );
 
-    // Send deletion confirmation email (only if email exists)
     if (userEmail) {
       try {
         await sendAccountDeletionEmail(userEmail, userName);
       } catch (emailError) {
         console.error('Failed to send deletion email:', emailError);
-        // Don't fail the request if email fails
       }
     } else {
       console.warn('Account deletion completed but email is missing, cannot send confirmation email.');
@@ -684,15 +665,21 @@ router.post('/account/cancel-deletion', authenticate, async (req: AuthRequest, r
       });
     }
 
-    // Cancel deletion
     user.accountStatus = AccountStatus.ACTIVE;
     user.scheduledDeletionDate = undefined;
     user.isActive = true;
+    user.tokenVersion += 1;
     await user.save();
+
+    // Revoke all refresh tokens
+    await RefreshToken.updateMany(
+      { userId: user._id, isRevoked: false },
+      { isRevoked: true }
+    );
 
     res.json({
       success: true,
-      message: 'Account deletion cancelled successfully. Your account is now active.',
+      message: 'Account deletion cancelled successfully. Your account is now active. Please log in again.',
     });
   } catch (error) {
     console.error('Cancel deletion error:', error);
