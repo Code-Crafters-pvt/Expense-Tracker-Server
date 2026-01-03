@@ -71,10 +71,10 @@ const isValidEntityChanges = (changes: unknown): ValidationError[] => {
             message: 'clientId is required and must be a string',
           });
         }
-        if (record.updatedAt !== undefined && !isValidTimestamp(record.updatedAt)) {
+        if (!isValidTimestamp(record.updatedAt)) {
           errors.push({
             field: `changes.${entityName}.created[${i}].updatedAt`,
-            message: 'updatedAt must be a valid timestamp',
+            message: 'updatedAt is required and must be a valid timestamp',
           });
         }
       }

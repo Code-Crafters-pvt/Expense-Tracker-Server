@@ -5,7 +5,6 @@ import {
   EntityChanges,
   SyncContext,
   ApplyResult,
-  ConflictRecord,
 } from '../types/sync.types';
 
 export interface SyncableDocument extends Document {

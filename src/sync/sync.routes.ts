@@ -8,8 +8,8 @@ const router = Router();
 
 router.post(
   '/',
-  syncLimiter,
   authenticate,
+  syncLimiter,
   validateSyncRequest,
   (req, res) => syncController.sync(req, res)
 );
