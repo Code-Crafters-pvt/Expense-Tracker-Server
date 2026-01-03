@@ -43,7 +43,7 @@ export const sendPasswordResetEmail = async (
   email: string,
   resetToken: string
 ): Promise<string> => {
-  const resetUrl = `${MAILEROO_CONFIG.appUrl}/reset-password?token=${resetToken}`;
+  const resetUrl = `${MAILEROO_CONFIG.appUrl}reset-password?token=${resetToken}`;
   const name = email.split('@')[0];
 
   const { html, text } = templates.passwordResetTemplate(resetUrl);
@@ -128,7 +128,7 @@ export const sendAccountDeletionEmail = async (
   name: string
 ): Promise<string> => {
   // Provide link to app where user can log in and cancel deletion
-  const cancelDeletionUrl = `${MAILEROO_CONFIG.appUrl}/settings`;
+  const cancelDeletionUrl = `${MAILEROO_CONFIG.appUrl}settings`;
   const { html, text } = templates.accountDeletionTemplate(name, cancelDeletionUrl);
 
   return await sendEmail({
