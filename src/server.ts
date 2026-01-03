@@ -20,6 +20,7 @@ import categoryRoutes from './routes/categories';
 import analyticsRoutes from './routes/analytics';
 import exportRoutes from './routes/export';
 import userRoutes from './routes/users';
+import { syncRoutes } from './sync';
 
 // Load environment variables
 dotenv.config();
@@ -86,6 +87,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/sync', syncRoutes);
 
 // 404 handler
 app.use(notFound);

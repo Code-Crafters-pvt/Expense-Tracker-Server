@@ -21,6 +21,7 @@ export interface IUser extends Document {
   emailChangeExpires?: Date;
   deactivatedAt?: Date;
   scheduledDeletionDate?: Date;
+  deletedAt?: Date;
   tokenVersion: number;
   lastLoginAt?: Date;
   
@@ -109,6 +110,11 @@ const userSchema = new Schema<IUser>(
     scheduledDeletionDate: {
       type: Date,
     },
+    deletedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     tokenVersion: {
       type: Number,
       default: 0,
@@ -131,6 +137,8 @@ const userSchema = new Schema<IUser>(
     },
   }
 );
+
+userSchema.index({ updatedAt: 1 });
 
 // Virtual field: isEmailVerified is computed from accountStatus
 // This ensures consistency and eliminates the need to store a redundant field
