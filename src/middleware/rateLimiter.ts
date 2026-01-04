@@ -100,3 +100,20 @@ export const accountReactivateFailureLimiter = rateLimit({
     return `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`;
   },
 });
+
+// Rate limiter for sync requests (60 per minute per user)
+// Allows frequent syncing but prevents abuse
+export const syncLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60, // 60 requests per minute (1 per second average)
+  message: {
+    success: false,
+    error: 'Sync rate limit exceeded. Please wait a moment before syncing again.',
+    code: 'SYNC_RATE_LIMITED',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return (req as any).user?._id?.toString() || req.ip || 'unknown';
+  },
+});

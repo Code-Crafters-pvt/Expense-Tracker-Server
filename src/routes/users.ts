@@ -13,6 +13,7 @@ import {
   sendAccountDeactivationEmail,
   sendSessionRevokedNotification,
 } from '../services/email';
+import { MAILEROO_CONFIG } from '../services/email/config/maileroo.config';
 import { RefreshToken } from '../models/RefreshToken';
 import { AccountStatus } from '../enums/AccountStatus';
 import crypto from 'crypto';
@@ -360,7 +361,7 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     // Send verification email to the new email address (after saving)
     // Use same pattern as registration - use stored email from user object
     if (emailChangeInitiated && user.pendingEmail) {
-      const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email-change?token=${emailChangeToken}`;
+      const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email-change?token=${emailChangeToken}`;
       let emailSent = false;
 
       if (user.pendingEmail) {

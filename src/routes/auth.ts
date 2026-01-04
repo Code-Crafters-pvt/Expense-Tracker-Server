@@ -15,6 +15,7 @@ import {
   sendVerificationEmail,
   sendWelcomeEmail,
 } from '../services/email';
+import { MAILEROO_CONFIG } from '../services/email/config/maileroo.config';
 import { AccountStatus } from '../enums/AccountStatus';
 import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
@@ -173,7 +174,7 @@ router.post('/register', validateRegistration, async (req, res) => {
           );
         }
 
-        const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+        const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email?token=${verificationToken}`;
         const displayName = existingUser.name || 
           (existingUser.firstName && existingUser.lastName 
             ? `${existingUser.firstName} ${existingUser.lastName}` 
@@ -282,7 +283,7 @@ router.post('/register', validateRegistration, async (req, res) => {
 
     await user.save();
 
-    const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+    const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email?token=${verificationToken}`;
     let emailSent = false;
 
     if (user.email) {
@@ -1138,7 +1139,7 @@ router.post(
         console.error('User email is missing, cannot send verification email');
       } else {
         try {
-          const verificationUrl = `${process.env.APP_URL || 'http://localhost:19006'}/verify-email?token=${verificationToken}`;
+          const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email?token=${verificationToken}`;
           await sendVerificationEmail(user.email, user.name || `${user.firstName} ${user.lastName}`, verificationUrl);
         } catch (emailError) {
           console.error('Failed to send verification email:', emailError);
