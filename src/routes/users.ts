@@ -351,14 +351,12 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
         });
       }
 
-      // Generate email change verification code
       emailChangeCode = generateEmailChangeCode();
       const hashedToken = crypto
         .createHash('sha256')
         .update(emailChangeCode)
         .digest('hex');
 
-      // Store pending email and hashed verification code
       user.pendingEmail = email.toLowerCase();
       user.emailChangeToken = hashedToken;
       user.emailChangeExpires = new Date(Date.now() + EMAIL_CHANGE_CODE_TTL_MS);
@@ -369,8 +367,6 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     // Save user first (like registration flow)
     await user.save();
 
-    // Send verification email to the new email address (after saving)
-    // Use same pattern as registration - use stored email from user object
     if (emailChangeInitiated && user.pendingEmail && emailChangeCode) {
       try {
         const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
@@ -468,13 +464,11 @@ router.post(
 
       const { code } = req.body;
 
-      // Hash the provided code to match stored hash
       const hashedToken = crypto
         .createHash('sha256')
         .update(code)
         .digest('hex');
 
-      // Find user with matching token and non-expired date
       const user = await User.findById(req.user._id)
         .select('+emailChangeToken +pendingEmail');
 
@@ -485,7 +479,6 @@ router.post(
         });
       }
 
-      // Verify token matches and hasn't expired
       if (
         !user.emailChangeToken ||
         user.emailChangeToken !== hashedToken ||

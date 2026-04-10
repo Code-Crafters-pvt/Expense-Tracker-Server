@@ -51,6 +51,15 @@ const generateVerificationCode = (): string =>
 const generateResetCode = (): string =>
   generateNumericCode(RESET_CODE_LENGTH);
 
+const hashCodeForUser = (
+  userId: string,
+  code: string
+): string =>
+  crypto
+    .createHash('sha256')
+    .update(`${userId}:${code}`)
+    .digest('hex');
+
 // Helper to calculate token expiration date
 const getTokenExpirationDate = (ttl: string): Date => {
   // Validate TTL format: positive integer followed by unit (s, m, h, d)
@@ -174,10 +183,10 @@ router.post('/register', validateRegistration, async (req, res) => {
         }
 
         const verificationCode = generateVerificationCode();
-        const hashedToken = crypto
-          .createHash('sha256')
-          .update(verificationCode)
-          .digest('hex');
+        const hashedToken = hashCodeForUser(
+          existingUser._id.toString(),
+          verificationCode
+        );
 
         existingUser.emailVerificationToken = hashedToken;
         existingUser.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -284,12 +293,6 @@ router.post('/register', validateRegistration, async (req, res) => {
       }
     }
 
-    const verificationCode = generateVerificationCode();
-    const hashedVerificationToken = crypto
-      .createHash('sha256')
-      .update(verificationCode)
-      .digest('hex');
-
     const user = new User({
       firstName: finalFirstName,
       lastName: finalLastName,
@@ -297,9 +300,15 @@ router.post('/register', validateRegistration, async (req, res) => {
       email,
       password,
       accountStatus: AccountStatus.PENDING_VERIFICATION,
-      emailVerificationToken: hashedVerificationToken,
+      emailVerificationToken: '',
       emailVerificationExpires: new Date(Date.now() + VERIFICATION_CODE_TTL_MS),
     });
+
+    const verificationCode = generateVerificationCode();
+    user.emailVerificationToken = hashCodeForUser(
+      user._id.toString(),
+      verificationCode
+    );
 
     await user.save();
     let emailSent = false;
@@ -882,16 +891,10 @@ router.post(
         { used: true }
       );
 
-      // Generate reset code and store only a hash of it
       const resetCode = generateResetCode();
 
-      // Hash code before storing (security best practice)
-      const hashedToken = crypto
-        .createHash('sha256')
-        .update(resetCode)
-        .digest('hex');
+      const hashedToken = hashCodeForUser(user._id.toString(), resetCode);
 
-      // Create reset token record (expires in 15 minutes)
       await ResetToken.create({
         userId: user._id,
         token: hashedToken,
@@ -938,6 +941,11 @@ router.post(
   '/reset-password',
   passwordResetCodeAttemptLimiter,
   [
+    body('email')
+      .isEmail()
+      .trim()
+      .toLowerCase()
+      .withMessage('Please enter a valid email'),
     body('code')
       .custom((value, { req }) => {
         const submittedCode = value || req.body.token;
@@ -970,16 +978,20 @@ router.post(
         });
       }
 
-      const { code, newPassword } = req.body;
+      const { email, code, newPassword } = req.body;
 
-      // Hash the provided code to match stored hash
-      const hashedToken = crypto
-        .createHash('sha256')
-        .update(code)
-        .digest('hex');
+      const user = await User.findOne({ email }).select('+password');
+      if (!user) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid or expired reset code',
+        });
+      }
 
-      // Find valid reset token
+      const hashedToken = hashCodeForUser(user._id.toString(), code);
+
       const resetToken = await ResetToken.findOne({
+        userId: user._id,
         token: hashedToken,
         used: false,
         expiresAt: { $gt: new Date() },
@@ -989,15 +1001,6 @@ router.post(
         return res.status(400).json({
           success: false,
           error: 'Invalid or expired reset code',
-        });
-      }
-
-      // Find user with password
-      const user = await User.findById(resetToken.userId).select('+password');
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          error: 'User not found',
         });
       }
 
@@ -1034,6 +1037,11 @@ router.post(
   '/verify-email',
   emailVerificationCodeAttemptLimiter,
   [
+    body('email')
+      .isEmail()
+      .trim()
+      .toLowerCase()
+      .withMessage('Please enter a valid email'),
     body('code')
       .custom((value, { req }) => {
         const submittedCode = value || req.body.token;
@@ -1056,19 +1064,9 @@ router.post(
         });
       }
 
-      const { code } = req.body;
+      const { email, code } = req.body;
 
-      // Hash the provided code to match stored hash
-      const hashedToken = crypto
-        .createHash('sha256')
-        .update(code)
-        .digest('hex');
-
-      // Find user with matching token and non-expired date
-      const user = await User.findOne({
-        emailVerificationToken: hashedToken,
-        emailVerificationExpires: { $gt: new Date() },
-      }).select('+emailVerificationToken');
+      const user = await User.findOne({ email }).select('+emailVerificationToken');
 
       if (!user) {
         return res.status(400).json({
@@ -1077,11 +1075,17 @@ router.post(
         });
       }
 
-      // Check if already verified
-      if (user.accountStatus === AccountStatus.ACTIVE) {
+      const hashedToken = hashCodeForUser(user._id.toString(), code);
+
+      // Verify code matches and hasn't expired
+      if (
+        user.emailVerificationToken !== hashedToken ||
+        !user.emailVerificationExpires ||
+        user.emailVerificationExpires < new Date()
+      ) {
         return res.status(400).json({
           success: false,
-          error: 'Email is already verified',
+          error: 'Invalid or expired verification code',
         });
       }
 
@@ -1169,10 +1173,10 @@ router.post(
 
       // Generate new verification code
       const verificationCode = generateVerificationCode();
-      const hashedVerificationToken = crypto
-        .createHash('sha256')
-        .update(verificationCode)
-        .digest('hex');
+      const hashedVerificationToken = hashCodeForUser(
+        user._id.toString(),
+        verificationCode
+      );
 
       // Update user with new token
       user.emailVerificationToken = hashedVerificationToken;

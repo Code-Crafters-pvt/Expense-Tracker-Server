@@ -18,8 +18,7 @@ export const passwordResetLimiter = rateLimit({
   },
 });
 
-// Rate limiter for password reset code entry attempts
-// Uses submitted code (or legacy token) with IP to slow down brute-force guesses
+// Rate limiter for password reset code entry attempts (email + IP)
 export const passwordResetCodeAttemptLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // 10 failed attempts per 15 minutes
@@ -31,7 +30,7 @@ export const passwordResetCodeAttemptLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
-    return req.ip || 'unknown';
+    return `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`;
   },
 });
 
@@ -47,7 +46,10 @@ export const emailVerificationCodeAttemptLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
-    return (req as any).user?._id?.toString() || req.ip || 'unknown';
+    return (
+      (req as any).user?._id?.toString() ||
+      `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`
+    );
   },
 });
 
