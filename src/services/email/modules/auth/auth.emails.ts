@@ -2,6 +2,14 @@ import { sendEmail } from '../../core/maileroo.service';
 import { MAILEROO_CONFIG } from '../../config/maileroo.config';
 import * as templates from './auth.templates';
 
+const buildAppLink = (
+  path: string,
+  params: Record<string, string>
+): string => {
+  const query = new URLSearchParams(params).toString();
+  return `${MAILEROO_CONFIG.appUrl}${path}?${query}`;
+};
+
 /**
  * Send email verification email
  */
@@ -11,10 +19,15 @@ export const sendVerificationEmail = async (
   verificationCode: string,
   expiresInMinutes: number
 ): Promise<string> => {
+  const appLink = buildAppLink('verify-email', {
+    email,
+    code: verificationCode,
+  });
   const { html, text } = templates.emailVerificationTemplate(
     name,
     verificationCode,
-    expiresInMinutes
+    expiresInMinutes,
+    appLink
   );
 
   return await sendEmail({
@@ -50,11 +63,16 @@ export const sendPasswordResetEmail = async (
   expiresInMinutes: number
 ): Promise<string> => {
   const name = email.split('@')[0];
+  const appLink = buildAppLink('reset-password', {
+    email,
+    code: resetCode,
+  });
 
   const { html, text } = templates.passwordResetTemplate(
     name,
     resetCode,
-    expiresInMinutes
+    expiresInMinutes,
+    appLink
   );
 
   return await sendEmail({
@@ -237,11 +255,16 @@ export const sendEmailChangeVerification = async (
   verificationCode: string,
   expiresInMinutes: number
 ): Promise<string> => {
+  const appLink = buildAppLink('verify-email-change', {
+    email: newEmail,
+    code: verificationCode,
+  });
   const { html, text } = templates.emailChangeVerificationTemplate(
     name,
     newEmail,
     verificationCode,
-    expiresInMinutes
+    expiresInMinutes,
+    appLink
   );
 
   return await sendEmail({

@@ -19,12 +19,13 @@ const formatEmailDate = (date: Date = new Date()): string => {
 export const emailVerificationTemplate = (
   name: string,
   verificationCode: string,
-  expiresInMinutes: number
+  expiresInMinutes: number,
+  appLink?: string
 ) => {
   const content = `
     <p>Hi ${name},</p>
     <p>Welcome to Expense Tracker! Please verify your email address to complete your registration.</p>
-    <p>Use this verification code in the mobile app to activate your account:</p>
+    <p>${appLink ? 'Tap the button below to open the app, or use the verification code manually.' : 'Use this verification code in the mobile app to activate your account:'}</p>
     <div style="text-align: center; margin: 30px 0;">
       <h2 style="font-size: 32px; color: #8B5CF6; letter-spacing: 8px; margin: 0;">${verificationCode}</h2>
     </div>
@@ -36,15 +37,20 @@ export const emailVerificationTemplate = (
     
     Welcome to Expense Tracker! Please verify your email address to complete your registration.
     
-    Use this verification code in the mobile app: ${verificationCode}
-    
+    ${appLink ? `Open in app: ${appLink}\n    \n` : ''}Use this verification code in the mobile app: ${verificationCode}
+
     This code will expire in ${expiresInMinutes} minutes.
     
     If you didn't create an account, please ignore this email.
   `;
 
   return {
-    html: getBaseEmailTemplate('Verify Your Email', content),
+    html: getBaseEmailTemplate(
+      'Verify Your Email',
+      content,
+      appLink ? 'Open in App' : undefined,
+      appLink
+    ),
     text,
   };
 };
@@ -86,12 +92,13 @@ export const welcomeEmailTemplate = (name: string) => {
 export const passwordResetTemplate = (
   name: string,
   resetCode: string,
-  expiresInMinutes: number
+  expiresInMinutes: number,
+  appLink?: string
 ) => {
   const content = `
     <p>Hi ${name},</p>
     <p>You requested to reset your password for your Expense Tracker account.</p>
-    <p>Use this reset code in the mobile app to continue:</p>
+    <p>${appLink ? 'Tap the button below to open the app, or use the reset code manually.' : 'Use this reset code in the mobile app to continue:'}</p>
     <div style="text-align: center; margin: 30px 0;">
       <h2 style="font-size: 32px; color: #8B5CF6; letter-spacing: 8px; margin: 0;">${resetCode}</h2>
     </div>
@@ -104,7 +111,9 @@ export const passwordResetTemplate = (
 
     Hi ${name},
     
-    You requested to reset your password. Use this code in the mobile app to reset it:
+    You requested to reset your password.
+    
+    ${appLink ? `Open in app: ${appLink}\n    \n` : ''}Use this code in the mobile app to reset it:
     ${resetCode}
     
     This code will expire in ${expiresInMinutes} minutes.
@@ -113,7 +122,12 @@ export const passwordResetTemplate = (
   `;
 
   return {
-    html: getBaseEmailTemplate('Password Reset Request', content),
+    html: getBaseEmailTemplate(
+      'Password Reset Request',
+      content,
+      appLink ? 'Open in App' : undefined,
+      appLink
+    ),
     text,
   };
 };
@@ -375,12 +389,13 @@ export const emailChangeVerificationTemplate = (
   name: string,
   newEmail: string,
   verificationCode: string,
-  expiresInMinutes: number
+  expiresInMinutes: number,
+  appLink?: string
 ) => {
   const content = `
     <p>Hi ${name},</p>
     <p>You requested to change your email address to: <strong>${newEmail}</strong></p>
-    <p>To complete this change, enter this verification code in the mobile app:</p>
+    <p>${appLink ? 'Tap the button below to open the app, or enter the verification code manually.' : 'To complete this change, enter this verification code in the mobile app:'}</p>
     <div style="text-align: center; margin: 30px 0;">
       <h2 style="font-size: 32px; color: #8B5CF6; letter-spacing: 8px; margin: 0;">${verificationCode}</h2>
     </div>
@@ -398,7 +413,7 @@ export const emailChangeVerificationTemplate = (
     
     You requested to change your email address to: ${newEmail}
     
-    To complete this change, enter this verification code in the mobile app:
+    ${appLink ? `Open in app: ${appLink}\n    \n` : ''}To complete this change, enter this verification code in the mobile app:
     ${verificationCode}
     
     This code will expire in ${expiresInMinutes} minutes.
@@ -407,7 +422,12 @@ export const emailChangeVerificationTemplate = (
   `;
 
   return {
-    html: getBaseEmailTemplate('Verify Your New Email Address', content),
+    html: getBaseEmailTemplate(
+      'Verify Your New Email Address',
+      content,
+      appLink ? 'Open in App' : undefined,
+      appLink
+    ),
     text,
   };
 };
