@@ -3,7 +3,12 @@ import { body, validationResult } from 'express-validator';
 import { User } from '../models/User';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
-import { passwordChangeLimiter, accountReactivateLimiter, accountReactivateFailureLimiter } from '../middleware/rateLimiter';
+import {
+  passwordChangeLimiter,
+  emailVerificationCodeAttemptLimiter,
+  accountReactivateLimiter,
+  accountReactivateFailureLimiter,
+} from '../middleware/rateLimiter';
 import {
   sendPasswordChangedNotification,
   sendEmailChangedNotification,
@@ -13,12 +18,18 @@ import {
   sendAccountDeactivationEmail,
   sendSessionRevokedNotification,
 } from '../services/email';
-import { MAILEROO_CONFIG } from '../services/email/config/maileroo.config';
 import { RefreshToken } from '../models/RefreshToken';
 import { AccountStatus } from '../enums/AccountStatus';
 import crypto from 'crypto';
 
 const router = express.Router();
+const EMAIL_CHANGE_CODE_LENGTH = 8;
+const EMAIL_CHANGE_CODE_TTL_MS = 30 * 60 * 1000;
+
+const generateEmailChangeCode = (): string =>
+  crypto.randomInt(0, 10 ** EMAIL_CHANGE_CODE_LENGTH)
+    .toString()
+    .padStart(EMAIL_CHANGE_CODE_LENGTH, '0');
 
 // POST /api/users/account/reactivate - Reactivate account (public endpoint)
 router.post('/account/reactivate', accountReactivateFailureLimiter, accountReactivateLimiter, [
@@ -306,7 +317,7 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
 
     const oldEmail = user.email;
     let emailChangeInitiated = false;
-    let emailChangeToken: string | undefined;
+    let emailChangeCode: string | undefined;
 
     // Update firstName, lastName, name immediately
     if (firstName !== undefined) {
@@ -340,17 +351,17 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
         });
       }
 
-      // Generate email change verification token
-      emailChangeToken = crypto.randomBytes(32).toString('hex');
+      // Generate email change verification code
+      emailChangeCode = generateEmailChangeCode();
       const hashedToken = crypto
         .createHash('sha256')
-        .update(emailChangeToken)
+        .update(emailChangeCode)
         .digest('hex');
 
-      // Store pending email and token (use normalized email for storage to prevent duplicates)
+      // Store pending email and hashed verification code
       user.pendingEmail = email.toLowerCase();
       user.emailChangeToken = hashedToken;
-      user.emailChangeExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      user.emailChangeExpires = new Date(Date.now() + EMAIL_CHANGE_CODE_TTL_MS);
       
       emailChangeInitiated = true;
     }
@@ -360,24 +371,17 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
 
     // Send verification email to the new email address (after saving)
     // Use same pattern as registration - use stored email from user object
-    if (emailChangeInitiated && user.pendingEmail) {
-      const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email-change?token=${emailChangeToken}`;
-      let emailSent = false;
-
-      if (user.pendingEmail) {
-        try {
-          const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
-          await sendEmailChangeVerification(
-            user.pendingEmail,
-            displayName,
-            verificationUrl
-          );
-          emailSent = true;
-        } catch (emailError) {
-          console.error('Failed to send email change verification:', emailError);
-        }
-      } else {
-        console.error('Pending email is missing, cannot send verification email.');
+    if (emailChangeInitiated && user.pendingEmail && emailChangeCode) {
+      try {
+        const displayName = user.name || `${user.firstName} ${user.lastName}`.trim() || 'User';
+        await sendEmailChangeVerification(
+          user.pendingEmail,
+          displayName,
+          emailChangeCode,
+          EMAIL_CHANGE_CODE_TTL_MS / (60 * 1000)
+        );
+      } catch (emailError) {
+        console.error('Failed to send email change verification:', emailError);
       }
     }
 
@@ -385,7 +389,7 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
     if (emailChangeInitiated) {
       return res.json({
         success: true,
-        message: 'Profile updated successfully. A verification email has been sent to your new email address. Please verify it to complete the email change.',
+        message: 'Profile updated successfully. A verification code has been sent to your new email address. Enter it in the app to complete the email change.',
         data: {
           user: {
             id: user._id,
@@ -438,10 +442,11 @@ router.put('/profile', authenticate, validateUpdateProfile, async (req: AuthRequ
 router.post(
   '/verify-email-change',
   authenticate,
+  emailVerificationCodeAttemptLimiter,
   [
-    body('token')
+    body('code')
       .notEmpty()
-      .withMessage('Verification token is required'),
+      .withMessage('Verification code is required'),
   ],
   async (req: AuthRequest, res) => {
     try {
@@ -461,12 +466,12 @@ router.post(
         });
       }
 
-      const { token } = req.body;
+      const { code } = req.body;
 
-      // Hash the provided token to match stored hash
+      // Hash the provided code to match stored hash
       const hashedToken = crypto
         .createHash('sha256')
-        .update(token)
+        .update(code)
         .digest('hex');
 
       // Find user with matching token and non-expired date
@@ -489,7 +494,7 @@ router.post(
       ) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid or expired verification token',
+          error: 'Invalid or expired verification code',
         });
       }
 

@@ -15,9 +15,14 @@ import {
   sendVerificationEmail,
   sendWelcomeEmail,
 } from '../services/email';
-import { MAILEROO_CONFIG } from '../services/email/config/maileroo.config';
 import { AccountStatus } from '../enums/AccountStatus';
-import { passwordResetLimiter, loginLimiter, loginFailureLimiter } from '../middleware/rateLimiter';
+import {
+  passwordResetLimiter,
+  passwordResetCodeAttemptLimiter,
+  emailVerificationCodeAttemptLimiter,
+  loginLimiter,
+  loginFailureLimiter,
+} from '../middleware/rateLimiter';
 import { validatePasswordComplexity } from '../utils/passwordValidator';
 import { getClientIpAddress, getDeviceInfo, parseFullName, getValidUserName, extractNameFromEmail } from '../utils/requestHelpers';
 import crypto from 'crypto';
@@ -30,6 +35,21 @@ const MS_PER_SECOND = 1000;
 const MS_PER_MINUTE = 60 * MS_PER_SECOND;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
+const VERIFICATION_CODE_LENGTH = 8;
+const VERIFICATION_CODE_TTL_MS = 30 * MS_PER_MINUTE;
+const RESET_CODE_LENGTH = 8;
+const RESET_CODE_TTL_MS = 15 * MS_PER_MINUTE;
+
+const generateNumericCode = (length: number): string =>
+  crypto.randomInt(0, 10 ** length)
+    .toString()
+    .padStart(length, '0');
+
+const generateVerificationCode = (): string =>
+  generateNumericCode(VERIFICATION_CODE_LENGTH);
+
+const generateResetCode = (): string =>
+  generateNumericCode(RESET_CODE_LENGTH);
 
 // Helper to calculate token expiration date
 const getTokenExpirationDate = (ttl: string): Date => {
@@ -153,10 +173,10 @@ router.post('/register', validateRegistration, async (req, res) => {
           nameUpdated = true;
         }
 
-        const verificationToken = crypto.randomBytes(32).toString('hex');
+        const verificationCode = generateVerificationCode();
         const hashedToken = crypto
           .createHash('sha256')
-          .update(verificationToken)
+          .update(verificationCode)
           .digest('hex');
 
         existingUser.emailVerificationToken = hashedToken;
@@ -174,7 +194,6 @@ router.post('/register', validateRegistration, async (req, res) => {
           );
         }
 
-        const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email?token=${verificationToken}`;
         const displayName = existingUser.name || 
           (existingUser.firstName && existingUser.lastName 
             ? `${existingUser.firstName} ${existingUser.lastName}` 
@@ -191,12 +210,13 @@ router.post('/register', validateRegistration, async (req, res) => {
           await sendVerificationEmail(
             existingUser.email,
             displayName,
-            verificationUrl
+            verificationCode,
+            VERIFICATION_CODE_TTL_MS / MS_PER_MINUTE
           );
 
           return res.status(200).json({
             success: true,
-            message: 'A verification email has been resent. Please check your inbox to verify your account.',
+            message: 'A verification code has been sent. Please check your inbox to verify your account.',
             data: {
               email: existingUser.email,
               requiresVerification: true,
@@ -264,10 +284,10 @@ router.post('/register', validateRegistration, async (req, res) => {
       }
     }
 
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationCode = generateVerificationCode();
     const hashedVerificationToken = crypto
       .createHash('sha256')
-      .update(verificationToken)
+      .update(verificationCode)
       .digest('hex');
 
     const user = new User({
@@ -278,18 +298,21 @@ router.post('/register', validateRegistration, async (req, res) => {
       password,
       accountStatus: AccountStatus.PENDING_VERIFICATION,
       emailVerificationToken: hashedVerificationToken,
-      emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      emailVerificationExpires: new Date(Date.now() + VERIFICATION_CODE_TTL_MS),
     });
 
     await user.save();
-
-    const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email?token=${verificationToken}`;
     let emailSent = false;
 
     if (user.email) {
       try {
         const displayName = user.name || `${finalFirstName} ${finalLastName}`.trim() || 'User';
-        await sendVerificationEmail(user.email, displayName, verificationUrl);
+        await sendVerificationEmail(
+          user.email,
+          displayName,
+          verificationCode,
+          VERIFICATION_CODE_TTL_MS / MS_PER_MINUTE
+        );
         emailSent = true;
       } catch (emailError) {
         console.error('Failed to send verification email:', emailError);
@@ -301,7 +324,7 @@ router.post('/register', validateRegistration, async (req, res) => {
     return res.status(201).json({
       success: true,
       message: emailSent
-        ? 'Registration successful! Please check your email to verify your account.'
+        ? 'Registration successful! Please check your email for the verification code.'
         : 'Registration successful! Verification email could not be sent. Please use "Resend Verification" option.',
       data: {
         email: user.email,
@@ -818,7 +841,7 @@ router.post('/oauth', async (req, res) => {
   }
 });
 
-// Forgot password - Request reset token
+// Forgot password - Request reset code
 router.post(
   '/forgot-password',
   passwordResetLimiter,
@@ -849,7 +872,7 @@ router.post(
       if (!user) {
         return res.json({
           success: true,
-          message: 'If that email exists, a reset link has been sent',
+          message: 'If that email exists, a reset code has been sent',
         });
       }
 
@@ -859,20 +882,20 @@ router.post(
         { used: true }
       );
 
-      // Generate reset token (cryptographically secure)
-      const resetToken = crypto.randomBytes(32).toString('hex');
+      // Generate reset code and store only a hash of it
+      const resetCode = generateResetCode();
 
-      // Hash token before storing (security best practice)
+      // Hash code before storing (security best practice)
       const hashedToken = crypto
         .createHash('sha256')
-        .update(resetToken)
+        .update(resetCode)
         .digest('hex');
 
-      // Create reset token record (expires in 1 hour)
+      // Create reset token record (expires in 15 minutes)
       await ResetToken.create({
         userId: user._id,
         token: hashedToken,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+        expiresAt: new Date(Date.now() + RESET_CODE_TTL_MS),
         used: false,
       });
 
@@ -881,12 +904,16 @@ router.post(
         console.error('User email is missing, cannot send reset email');
         return res.json({
           success: true,
-          message: 'If that email exists, a reset link has been sent',
+          message: 'If that email exists, a reset code has been sent',
         });
       }
 
       try {
-        await sendPasswordResetEmail(user.email, resetToken);
+        await sendPasswordResetEmail(
+          user.email,
+          resetCode,
+          RESET_CODE_TTL_MS / MS_PER_MINUTE
+        );
       } catch (emailError) {
         console.error('Failed to send reset email:', emailError);
         // Don't fail the request if email fails
@@ -894,7 +921,7 @@ router.post(
 
       res.json({
         success: true,
-        message: 'If that email exists, a reset link has been sent',
+        message: 'If that email exists, a reset code has been sent',
       });
     } catch (error) {
       console.error('Forgot password error:', error);
@@ -906,11 +933,21 @@ router.post(
   }
 );
 
-// Reset password - Use token to set new password
+// Reset password - Use code to set new password
 router.post(
   '/reset-password',
+  passwordResetCodeAttemptLimiter,
   [
-    body('token').notEmpty().withMessage('Reset token is required'),
+    body('code')
+      .custom((value, { req }) => {
+        const submittedCode = value || req.body.token;
+        if (!submittedCode || !String(submittedCode).trim()) {
+          throw new Error('Reset code is required');
+        }
+
+        req.body.code = String(submittedCode).trim();
+        return true;
+      }),
     body('newPassword')
       .isLength({ min: 8, max: 128 })
       .withMessage('Password must be between 8 and 128 characters')
@@ -933,12 +970,12 @@ router.post(
         });
       }
 
-      const { token, newPassword } = req.body;
+      const { code, newPassword } = req.body;
 
-      // Hash the provided token to match stored hash
+      // Hash the provided code to match stored hash
       const hashedToken = crypto
         .createHash('sha256')
-        .update(token)
+        .update(code)
         .digest('hex');
 
       // Find valid reset token
@@ -951,7 +988,7 @@ router.post(
       if (!resetToken) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid or expired reset token',
+          error: 'Invalid or expired reset code',
         });
       }
 
@@ -995,10 +1032,18 @@ router.post(
 // Verify email address
 router.post(
   '/verify-email',
+  emailVerificationCodeAttemptLimiter,
   [
-    body('token')
-      .notEmpty()
-      .withMessage('Verification token is required'),
+    body('code')
+      .custom((value, { req }) => {
+        const submittedCode = value || req.body.token;
+        if (!submittedCode || !String(submittedCode).trim()) {
+          throw new Error('Verification code is required');
+        }
+
+        req.body.code = String(submittedCode).trim();
+        return true;
+      }),
   ],
   async (req, res) => {
     try {
@@ -1011,12 +1056,12 @@ router.post(
         });
       }
 
-      const { token } = req.body;
+      const { code } = req.body;
 
-      // Hash the provided token to match stored hash
+      // Hash the provided code to match stored hash
       const hashedToken = crypto
         .createHash('sha256')
-        .update(token)
+        .update(code)
         .digest('hex');
 
       // Find user with matching token and non-expired date
@@ -1028,7 +1073,7 @@ router.post(
       if (!user) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid or expired verification token',
+          error: 'Invalid or expired verification code',
         });
       }
 
@@ -1110,7 +1155,7 @@ router.post(
       if (!user) {
         return res.json({
           success: true,
-          message: 'If that email exists and is not verified, a verification link has been sent',
+          message: 'If that email exists and is not verified, a verification code has been sent',
         });
       }
 
@@ -1122,16 +1167,16 @@ router.post(
         });
       }
 
-      // Generate new verification token
-      const verificationToken = crypto.randomBytes(32).toString('hex');
+      // Generate new verification code
+      const verificationCode = generateVerificationCode();
       const hashedVerificationToken = crypto
         .createHash('sha256')
-        .update(verificationToken)
+        .update(verificationCode)
         .digest('hex');
 
       // Update user with new token
       user.emailVerificationToken = hashedVerificationToken;
-      user.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      user.emailVerificationExpires = new Date(Date.now() + VERIFICATION_CODE_TTL_MS);
       await user.save();
 
       // Send verification email
@@ -1139,8 +1184,12 @@ router.post(
         console.error('User email is missing, cannot send verification email');
       } else {
         try {
-          const verificationUrl = `${MAILEROO_CONFIG.appUrl}verify-email?token=${verificationToken}`;
-          await sendVerificationEmail(user.email, user.name || `${user.firstName} ${user.lastName}`, verificationUrl);
+          await sendVerificationEmail(
+            user.email,
+            user.name || `${user.firstName} ${user.lastName}`,
+            verificationCode,
+            VERIFICATION_CODE_TTL_MS / MS_PER_MINUTE
+          );
         } catch (emailError) {
           console.error('Failed to send verification email:', emailError);
           // Don't fail the request if email fails
@@ -1149,7 +1198,7 @@ router.post(
 
       res.json({
         success: true,
-        message: 'If that email exists and is not verified, a verification link has been sent',
+        message: 'If that email exists and is not verified, a verification code has been sent',
       });
     } catch (error) {
       console.error('Resend verification error:', error);

@@ -8,9 +8,14 @@ import * as templates from './auth.templates';
 export const sendVerificationEmail = async (
   email: string,
   name: string,
-  verificationLink: string
+  verificationCode: string,
+  expiresInMinutes: number
 ): Promise<string> => {
-  const { html, text } = templates.emailVerificationTemplate(name, verificationLink);
+  const { html, text } = templates.emailVerificationTemplate(
+    name,
+    verificationCode,
+    expiresInMinutes
+  );
 
   return await sendEmail({
     to: email,
@@ -41,12 +46,16 @@ export const sendWelcomeEmail = async (email: string, name: string): Promise<str
  */
 export const sendPasswordResetEmail = async (
   email: string,
-  resetToken: string
+  resetCode: string,
+  expiresInMinutes: number
 ): Promise<string> => {
-  const resetUrl = `${MAILEROO_CONFIG.appUrl}reset-password?token=${resetToken}`;
   const name = email.split('@')[0];
 
-  const { html, text } = templates.passwordResetTemplate(resetUrl);
+  const { html, text } = templates.passwordResetTemplate(
+    name,
+    resetCode,
+    expiresInMinutes
+  );
 
   return await sendEmail({
     to: email,
@@ -225,9 +234,15 @@ export const sendSessionRevokedNotification = async (
 export const sendEmailChangeVerification = async (
   newEmail: string,
   name: string,
-  verificationLink: string
+  verificationCode: string,
+  expiresInMinutes: number
 ): Promise<string> => {
-  const { html, text } = templates.emailChangeVerificationTemplate(name, newEmail, verificationLink);
+  const { html, text } = templates.emailChangeVerificationTemplate(
+    name,
+    newEmail,
+    verificationCode,
+    expiresInMinutes
+  );
 
   return await sendEmail({
     to: newEmail,
