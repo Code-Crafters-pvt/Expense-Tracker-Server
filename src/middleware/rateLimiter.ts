@@ -18,6 +18,41 @@ export const passwordResetLimiter = rateLimit({
   },
 });
 
+// Rate limiter for password reset code entry attempts (email + IP)
+export const passwordResetCodeAttemptLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 failed attempts per 15 minutes
+  message: {
+    success: false,
+    error: 'Too many reset code attempts. Please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    return `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`;
+  },
+});
+
+// Rate limiter for email verification code entry attempts
+export const emailVerificationCodeAttemptLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 failed attempts per 15 minutes
+  message: {
+    success: false,
+    error: 'Too many verification code attempts. Please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    return (
+      (req as any).user?._id?.toString() ||
+      `${req.body.email || 'unknown'}_${req.ip || 'unknown'}`
+    );
+  },
+});
+
 // Rate limiter for password change (5 attempts per hour per user)
 export const passwordChangeLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour

@@ -2,15 +2,33 @@ import { sendEmail } from '../../core/maileroo.service';
 import { MAILEROO_CONFIG } from '../../config/maileroo.config';
 import * as templates from './auth.templates';
 
+const buildAppLink = (
+  path: string,
+  params: Record<string, string>
+): string => {
+  const query = new URLSearchParams(params).toString();
+  return `${MAILEROO_CONFIG.appUrl}${path}?${query}`;
+};
+
 /**
  * Send email verification email
  */
 export const sendVerificationEmail = async (
   email: string,
   name: string,
-  verificationLink: string
+  verificationCode: string,
+  expiresInMinutes: number
 ): Promise<string> => {
-  const { html, text } = templates.emailVerificationTemplate(name, verificationLink);
+  const appLink = buildAppLink('verify-email', {
+    email,
+    code: verificationCode,
+  });
+  const { html, text } = templates.emailVerificationTemplate(
+    name,
+    verificationCode,
+    expiresInMinutes,
+    appLink
+  );
 
   return await sendEmail({
     to: email,
@@ -41,12 +59,21 @@ export const sendWelcomeEmail = async (email: string, name: string): Promise<str
  */
 export const sendPasswordResetEmail = async (
   email: string,
-  resetToken: string
+  resetCode: string,
+  expiresInMinutes: number
 ): Promise<string> => {
-  const resetUrl = `${MAILEROO_CONFIG.appUrl}reset-password?token=${resetToken}`;
   const name = email.split('@')[0];
+  const appLink = buildAppLink('reset-password', {
+    email,
+    code: resetCode,
+  });
 
-  const { html, text } = templates.passwordResetTemplate(resetUrl);
+  const { html, text } = templates.passwordResetTemplate(
+    name,
+    resetCode,
+    expiresInMinutes,
+    appLink
+  );
 
   return await sendEmail({
     to: email,
@@ -225,9 +252,20 @@ export const sendSessionRevokedNotification = async (
 export const sendEmailChangeVerification = async (
   newEmail: string,
   name: string,
-  verificationLink: string
+  verificationCode: string,
+  expiresInMinutes: number
 ): Promise<string> => {
-  const { html, text } = templates.emailChangeVerificationTemplate(name, newEmail, verificationLink);
+  const appLink = buildAppLink('verify-email-change', {
+    email: newEmail,
+    code: verificationCode,
+  });
+  const { html, text } = templates.emailChangeVerificationTemplate(
+    name,
+    newEmail,
+    verificationCode,
+    expiresInMinutes,
+    appLink
+  );
 
   return await sendEmail({
     to: newEmail,

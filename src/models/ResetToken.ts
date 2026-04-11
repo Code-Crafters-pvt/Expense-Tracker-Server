@@ -19,8 +19,6 @@ const resetTokenSchema = new Schema<IResetToken>(
     token: {
       type: String,
       required: true,
-      unique: true,
-      index: true,
     },
     expiresAt: {
       type: Date,
@@ -38,6 +36,7 @@ const resetTokenSchema = new Schema<IResetToken>(
 
 // Auto-delete expired tokens immediately when expiresAt is reached
 resetTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+resetTokenSchema.index({ userId: 1, token: 1, used: 1 });
 
 export const ResetToken = mongoose.model<IResetToken>(
   'ResetToken',
