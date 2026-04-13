@@ -2,12 +2,20 @@ import { sendEmail } from '../../core/maileroo.service';
 import { MAILEROO_CONFIG } from '../../config/maileroo.config';
 import * as templates from './auth.templates';
 
-const buildAppLink = (
-  path: string,
-  params: Record<string, string>
-): string => {
+const joinUrlPath = (baseUrl: string, path: string): string => {
+  const trimmedPath = path.replace(/^\/+/, '');
+
+  if (baseUrl.endsWith('://')) {
+    return `${baseUrl}${trimmedPath}`;
+  }
+
+  return `${baseUrl.replace(/\/+$/, '')}/${trimmedPath}`;
+};
+
+const buildAppLink = (path: string, params: Record<string, string>): string => {
   const query = new URLSearchParams(params).toString();
-  return `${MAILEROO_CONFIG.appUrl}${path}?${query}`;
+  const baseUrl = MAILEROO_CONFIG.appDeepLinkUrl || MAILEROO_CONFIG.appUrl;
+  return `${joinUrlPath(baseUrl, path)}?${query}`;
 };
 
 /**
@@ -155,7 +163,10 @@ export const sendAccountDeletionEmail = async (
   name: string
 ): Promise<string> => {
   // Provide link to app where user can log in and cancel deletion
-  const cancelDeletionUrl = `${MAILEROO_CONFIG.appUrl}settings`;
+  const cancelDeletionUrl = joinUrlPath(
+    MAILEROO_CONFIG.appDeepLinkUrl || MAILEROO_CONFIG.appUrl,
+    'settings'
+  );
   const { html, text } = templates.accountDeletionTemplate(name, cancelDeletionUrl);
 
   return await sendEmail({
