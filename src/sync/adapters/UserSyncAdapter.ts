@@ -44,6 +44,10 @@ export class UserSyncAdapter extends BaseSyncAdapter<UserSyncRecord, UserDocumen
       return { created: [], updated: [], deleted: [user._id.toString()] };
     }
 
+    if (user.createdAt && user.createdAt.getTime() > ctx.lastPulledAt) {
+      return { created: [record], updated: [], deleted: [] };
+    }
+
     return { created: [], updated: [record], deleted: [] };
   }
 
