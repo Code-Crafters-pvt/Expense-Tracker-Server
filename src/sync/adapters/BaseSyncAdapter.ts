@@ -10,6 +10,7 @@ import {
 export interface SyncableDocument extends Document {
   _id: Types.ObjectId;
   clientId?: string;
+  createdAt: Date;
   updatedAt: Date;
   deletedAt?: Date | null;
 }
@@ -198,7 +199,7 @@ export abstract class BaseSyncAdapter<
 
       if (doc.deletedAt) {
         changes.deleted.push(doc.clientId || doc._id.toString());
-      } else if (!lastPulledAt || doc.updatedAt.getTime() <= lastPulledAt) {
+      } else if (!lastPulledAt || doc.createdAt.getTime() > lastPulledAt) {
         changes.created.push(record);
       } else {
         changes.updated.push(record);

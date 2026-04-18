@@ -48,7 +48,7 @@ export const emailVerificationTemplate = (
     html: getBaseEmailTemplate(
       'Verify Your Email',
       content,
-      appLink ? 'Open in App' : undefined,
+      appLink ? 'Activate Account' : undefined,
       appLink
     ),
     text,
@@ -125,7 +125,7 @@ export const passwordResetTemplate = (
     html: getBaseEmailTemplate(
       'Password Reset Request',
       content,
-      appLink ? 'Open in App' : undefined,
+      appLink ? 'Reset Password' : undefined,
       appLink
     ),
     text,
