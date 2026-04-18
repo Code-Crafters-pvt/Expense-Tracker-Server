@@ -25,7 +25,7 @@ export const emailVerificationTemplate = (
   const content = `
     <p>Hi ${name},</p>
     <p>Welcome to Expense Tracker! Please verify your email address to complete your registration.</p>
-    <p>${appLink ? 'Tap the button below to open the app, or use the verification code manually.' : 'Use this verification code in the mobile app to activate your account:'}</p>
+    <p>${appLink ? 'Tap the button below to activate your account, or enter the verification code manually in the app.' : 'Use this verification code in the mobile app to activate your account:'}</p>
     <div style="text-align: center; margin: 30px 0;">
       <h2 style="font-size: 32px; color: #8B5CF6; letter-spacing: 8px; margin: 0;">${verificationCode}</h2>
     </div>
@@ -34,13 +34,13 @@ export const emailVerificationTemplate = (
 
   const text = `
     Hi ${name},
-    
+
     Welcome to Expense Tracker! Please verify your email address to complete your registration.
-    
-    ${appLink ? `Open in app: ${appLink}\n    \n` : ''}Use this verification code in the mobile app: ${verificationCode}
+
+    ${appLink ? `Activate your account: ${appLink}\n    \n` : ''}Use this verification code in the mobile app: ${verificationCode}
 
     This code will expire in ${expiresInMinutes} minutes.
-    
+
     If you didn't create an account, please ignore this email.
   `;
 
@@ -98,7 +98,7 @@ export const passwordResetTemplate = (
   const content = `
     <p>Hi ${name},</p>
     <p>You requested to reset your password for your Expense Tracker account.</p>
-    <p>${appLink ? 'Tap the button below to open the app, or use the reset code manually.' : 'Use this reset code in the mobile app to continue:'}</p>
+    <p>${appLink ? 'Tap the button below to reset your password, or enter the reset code manually in the app.' : 'Use this reset code in the mobile app to continue:'}</p>
     <div style="text-align: center; margin: 30px 0;">
       <h2 style="font-size: 32px; color: #8B5CF6; letter-spacing: 8px; margin: 0;">${resetCode}</h2>
     </div>
@@ -113,7 +113,7 @@ export const passwordResetTemplate = (
     
     You requested to reset your password.
     
-    ${appLink ? `Open in app: ${appLink}\n    \n` : ''}Use this code in the mobile app to reset it:
+    ${appLink ? `Reset your password: ${appLink}\n    \n` : ''}Use this code in the mobile app to reset it:
     ${resetCode}
     
     This code will expire in ${expiresInMinutes} minutes.
@@ -395,7 +395,7 @@ export const emailChangeVerificationTemplate = (
   const content = `
     <p>Hi ${name},</p>
     <p>You requested to change your email address to: <strong>${newEmail}</strong></p>
-    <p>${appLink ? 'Tap the button below to open the app, or enter the verification code manually.' : 'To complete this change, enter this verification code in the mobile app:'}</p>
+    <p>${appLink ? 'Tap the button below to verify your new email, or enter the verification code manually in the app.' : 'To complete this change, enter this verification code in the mobile app:'}</p>
     <div style="text-align: center; margin: 30px 0;">
       <h2 style="font-size: 32px; color: #8B5CF6; letter-spacing: 8px; margin: 0;">${verificationCode}</h2>
     </div>
@@ -413,7 +413,7 @@ export const emailChangeVerificationTemplate = (
     
     You requested to change your email address to: ${newEmail}
     
-    ${appLink ? `Open in app: ${appLink}\n    \n` : ''}To complete this change, enter this verification code in the mobile app:
+    ${appLink ? `Verify your new email: ${appLink}\n    \n` : ''}To complete this change, enter this verification code in the mobile app:
     ${verificationCode}
     
     This code will expire in ${expiresInMinutes} minutes.
@@ -425,7 +425,7 @@ export const emailChangeVerificationTemplate = (
     html: getBaseEmailTemplate(
       'Verify Your New Email Address',
       content,
-      appLink ? 'Open in App' : undefined,
+      appLink ? 'Verify New Email' : undefined,
       appLink
     ),
     text,
