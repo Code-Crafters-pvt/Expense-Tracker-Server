@@ -390,6 +390,17 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
       });
     }
 
+    // Check account lockout before any other status checks
+    if (user.lockoutUntil && user.lockoutUntil > new Date()) {
+      const secondsRemaining = Math.ceil((user.lockoutUntil.getTime() - Date.now()) / 1000);
+      return res.status(423).json({
+        success: false,
+        error: 'Account temporarily locked due to too many failed login attempts. Please try again later.',
+        code: 'ACCOUNT_LOCKED',
+        retryAfterSeconds: secondsRemaining,
+      });
+    }
+
     if (user.accountStatus === AccountStatus.PENDING_VERIFICATION) {
       return res.status(403).json({
         success: false,
@@ -426,14 +437,29 @@ router.post('/login', loginFailureLimiter, loginLimiter, validateLogin, async (r
 
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
+      const MAX_ATTEMPTS = 10;
+      const LOCKOUT_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
+      const newAttempts = (user.loginAttempts || 0) + 1;
+      const updateFields: Record<string, any> = { loginAttempts: newAttempts };
+
+      if (newAttempts >= MAX_ATTEMPTS) {
+        updateFields.lockoutUntil = new Date(Date.now() + LOCKOUT_DURATION_MS);
+        updateFields.loginAttempts = 0;
+      }
+
+      await User.updateOne({ _id: user._id }, updateFields);
+
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials',
       });
     }
 
-    // Update last login timestamp
+    // Update last login timestamp and clear any lockout state
     user.lastLoginAt = new Date();
+    user.loginAttempts = 0;
+    user.lockoutUntil = null;
     await user.save();
 
     // Validate email exists before generating tokens
