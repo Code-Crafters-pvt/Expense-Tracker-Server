@@ -24,7 +24,9 @@ export interface IUser extends Document {
   deletedAt?: Date;
   tokenVersion: number;
   lastLoginAt?: Date;
-  
+  loginAttempts: number;
+  lockoutUntil?: Date | null;
+
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -121,6 +123,14 @@ const userSchema = new Schema<IUser>(
     },
     lastLoginAt: {
       type: Date,
+    },
+    loginAttempts: {
+      type: Number,
+      default: 0,
+    },
+    lockoutUntil: {
+      type: Date,
+      default: null,
     },
   },
   {
